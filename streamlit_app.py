@@ -34,25 +34,222 @@ import numpy.ma as ma
 
 # import whitebox
 import netCDF4
- 
+
 import scipy.optimize
 
-    
-def monoExp(x, m, t, b):
-    return m * np.exp(-t * x) + b
 
 @st.cache
-def surfature(X,Y,Z):
+def plane_fit(polyline,X,Y,h):
+    """Fit a 2D shapely LineString with a planar surface
     
+    Parameters
+    ----------
+    polyline : shapely LineString
+        2D LineString defining the (x,y) coordinates of 
+        the polyline points
+    X : float numpy array
+        numpy array of topography UTM x-coordiantes
+    Y : float numpy array
+        numpy array of topography UTM y-coordiantes
+    h : float numpy array
+        numpy array of topography elevation
+    
+    Returns
+    -------
+    C : float array
+        coefficients of linear fit C[0]*x+C[1]*y+C[2]
+    h_plane : float numpy array
+        numpy array of linear fit elevation
+    
+    """
+
+    len_list = np.linspace(0, polyline.length, num=20, endpoint=True)
+    
+    # list of 20 points sampled uniformly (based on length) from
+    # the polyline defining the cone top 
+    coords_uniform = []
+    for Length in len_list:
+
+        ix, iy = polyline.interpolate(Length, normalized=False).xy
+
+        coords_uniform.append((ix[0], iy[0]))
+
+    line_uni = LineString(coords_uniform)
+
+    # x and y coordinates of the points
+    x_uni, y_uni = line_uni.coords.xy
+    
+    x_poly = []
+    y_poly = []
+    h_poly = []
+
+    for (x, y) in zip(x_uni, y_uni):
+
+        dist = polyline.distance(Point(x, y))
+
+        if (dist < 10.0):
+
+            # bi-linear interpolation of elevation h from X,Y grid points
+            # to (x,y)
+            
+            ix = np.minimum(int(np.floor((x - x_min) / dx)), X.shape[1] - 2)
+            iy = np.minimum(int(np.floor((y - y_min) / dx)), Y.shape[0] - 2)
+
+            ix1 = ix + 1
+            iy1 = iy + 1
+
+            alfax = (x - X[0, ix]) / dx
+            alfay = (y - Y[iy, 0]) / dy
+
+            z = alfay * (alfax * h[iy1, ix1] + (1.0 - alfax) * h[iy1, ix]) + (
+                1.0 - alfay) * (alfax * h[iy, ix1] + (1.0 - alfax) * h[iy, ix])
+
+            if z == z:
+
+                x_poly.append(x)
+                y_poly.append(y)
+                h_poly.append(z)
+
+    ax.plot(x_poly, y_poly, '.r')
+
+
+    # the linear fit algorithm works better for values of the 
+    # coordinates close to zero. for this reason we translate 
+    # the coordinates by using the mean coordinates of the
+    # points of cone top: x_poly_avg,y_poly_avg
+    
+    x_poly_avg = np.mean(x_poly)
+    y_poly_avg = np.mean(y_poly)
+    print('x_base_avg', x_poly_avg)
+    print('y_base_avg', y_poly_avg)
+
+    x_poly_rel = x_poly - x_poly_avg
+    y_poly_rel = y_poly - y_poly_avg
+
+    # create a 2D array with x,y,h of top_points
+    data = np.c_[np.array(x_poly_rel), np.array(y_poly_rel), np.array(h_poly)]
+    # https://stackoverflow.com/questions/55711689/3d-plane-fitting-using-scipy-least-squares-producing-completely-wrong-fit
+    A = np.c_[data[:, 0], data[:, 1], np.ones(data.shape[0])]
+    C, _, _, _ = scipy.linalg.lstsq(A, data[:, 2])  # coefficients
+
+    print('C', C)
+
+    # evaluate the elevation on the base plane for gridpoints
+    h_plane = C[0] * (X - x_poly_avg) + C[1] * (Y - y_poly_avg) + C[2]
+
+    return C, h_plane
+
+
+@st.cache
+def chaikins_corner_cutting(coords, refinements=5):
+    """Chaikin's corner cutting algorithm. Smooths a polyline 
+    by iteratively replacing every point by two new points: 
+    one 1/4 of the way to the next point and one 1/4 of 
+    the way to the previous point.
+    
+    Source: https://stackoverflow.com/questions/47068504/where-to-find-python-implementation-of-chaikins-corner-cutting-algorithm
+    
+    
+    Parameters
+    ----------
+    coords : float list of lists
+        list of points, defined by the x and y coordinated
+    refinement : int
+        number of refinements for the Chaikin's algorithm
+    
+    Returns
+    -------
+    coords : numnpy float array
+        coordinates of the points defining the smoother
+        polyline
+    
+    """
+
+    coords = np.array(coords)
+
+    for _ in range(refinements):
+        L = coords.repeat(2, axis=0)
+        R = np.empty_like(L)
+        R[0] = L[0]
+        R[2::2] = L[1:-1:2]
+        R[1:-1:2] = L[2::2]
+        R[-1] = L[-1]
+        coords = L * 0.75 + R * 0.25
+
+    return coords
+
+
+def monoExp(x, m, t, b):
+    """Exponential function used for the fitting. The 
+    fitting function has an horizontal asymptot y=b
+    and intersect x=0 at y=m+b. The values of t controls
+    how fast the exponential approaches the horizontal
+    asymptot.
+    
+    Parameters
+    ----------
+    x : float 
+        x coordinate
+    t : float
+        exponential function parameter    
+    m : float
+        exponential function parameter    
+    b : float
+        exponential function parameter    
+
+    Returns
+    -------
+    y : float
+        value of the exponential function at x
+    
+    """
+    
+    y = m * np.exp(-t * x) + b
+    
+    return y
+
+
+@st.cache
+def surfature(X, Y, Z):
+    """Curvature of Z=f(X,Y).
+    Igor V Florinsky
+    An illustrated introduction to general geomorphometry
+    Progress in Physical Geography
+    2017, Vol. 41(6) 723–752
+    
+    Parameters
+    ----------
+    X : float numpy array
+        numpy array of topography UTM x-coordiantes
+    Y : float numpy array
+        numpy array of topography UTM y-coordiantes
+    z : float numpy array
+        numpy array of topography elevation  
+
+    Returns
+    -------
+    Pmax : float numpy array
+        maximum curvature
+    Pmin : float numpy array
+        minimum curvature
+    
+    """
     cellsize = np.abs(X[1, 2] - X[1, 1])
-    
-    gx, gy = np.gradient(Z,cellsize,cellsize)
-    gxx, gxy1 = np.gradient(gx,cellsize,cellsize)
-    gxy2, gyy = np.gradient(gy,cellsize,cellsize)
-    
-    gxy = 0.5*(gxy1+gxy2)
+
+    #first order local derivatives 
+    gx, gy = np.gradient(Z, cellsize, cellsize)
+
+    # second order local derivatives
+    gxx, gxy1 = np.gradient(gx, cellsize, cellsize)
+
+    # second order local derivatives
+    gxy2, gyy = np.gradient(gy, cellsize, cellsize)
+
+    # mixed second order average local derivatives
+    gxy = 0.5 * (gxy1 + gxy2)
     gyx = gxy
-    
+
+    # notation from Florinsky 2017
     p = gx
     q = gy
 
@@ -60,27 +257,60 @@ def surfature(X,Y,Z):
     t = gyy
     s = gxy
 
-    H = - ( (1.0+q**2)*r - 2.0*p*q*s + ( 1.0 + p**2) * t ) / ( 2.0 * np.sqrt( (1.0+p**2+q**2)**3 ) )
+    # Mean curvature
+    H = - ((1.0+q**2)*r - 2.0*p*q*s + (1.0 + p**2) * t) / \
+        (2.0 * np.sqrt((1.0+p**2+q**2)**3))
+        
+    # Gaussian curvature
+    K = (r * t - s**2) / (1.0 + p**2 + q**2)**2
 
-    K = ( r*t - s**2 ) / ( 1.0 + p**2 + q**2 )**2
+    # Unsphericity curvature
+    M = np.sqrt(H**2 - K)
 
-    M = np.sqrt( H**2 - K )
-
-    #% Principle Curvatures
+    # Principal Curvatures
     Pmax = H + M
     Pmin = H - M
 
-    n = 5
-    m = 1
     
+    # n = 5
+    # m = 1
     # Pmin = np.sign(Pmin)*np.log(1.0+10**(n*m)*np.abs(Pmin))
     # Pmax = np.sign(Pmax)*np.log(1.0+10**(n*m)*np.abs(Pmax))
 
-    return Pmax,Pmin
+    return Pmax, Pmin
+
 
 @st.cache
 def read_asc(ascii_file):
-
+    """Read DEM in .asc format 
+    Read a DEM in ESRII ascci format and UTM coordinated
+    
+    Parameters
+    ----------
+    ascii_file : string
+        name of file to read
+    Returns
+    -------
+    X : float numpy array
+        array of grid y UTM coordinates
+    Y : float numpy array
+        array of grid x UTM coordinates
+    h : float numpy array
+        array of topography elevation    
+    x_min : float
+        minimum x of grid points    
+    x_max : float
+        maximum x of grid points   
+    delta_x : float
+        size of grid cells in x-direction    
+    y_min : float
+        minimum y of grid points        
+    y_max : float
+        minimum y of grid points        
+    delta_y : float
+        size of grid cells in y-direction
+    
+    """
     import numpy as np
     from linecache import getline
 
@@ -135,23 +365,33 @@ def reverse_geom(geom):
 
 
 @st.cache
-def offset_path(medial_axis, offset, plot_flag):
+def offset_path(skeleton_vector, offset, plot_flag):
+    """Return a matplotlib at a distance from the cone
+    top and in the direction of the flank
+    
+    Parameters
+    ----------
+    skeleton_vector : shapely LineString
+        2D LineString defining the (x,y) coordinates of 
+        the cone top
+    offset: float 
+        offset distance
+    plot_flag : logical
+        logical to plot the offset path
+    
+    Returns
+    -------
+    path : matplotlib Path
+        offset path on the flank of the cone 
+    
+    """
+    
+    x, y = skeleton_vector.coords.xy
 
-    x, y = medial_axis.coords.xy
-    x_avg = np.mean(x)
-    y_avg = np.mean(y)
-
-    print('x_Avg,y_avg', x_avg, y_avg)
-
-    # medial_axis = translate(medial_axis, xoff=-x_avg, yoff=-y_avg)
-
-    offset_l = medial_axis.parallel_offset(offset, 'left', join_style=1)
-    offset_r = medial_axis.parallel_offset(offset, 'right', join_style=1)
-
-    # print(offset_l.geom_type)
-    # print(offset_l)
-    # print(offset_r.geom_type)
-    # print(offset_r)
+    # offset paths on left and right of the cone top
+    # we do not know a priori which one we is on the flank side
+    offset_l = skeleton_vector.parallel_offset(offset, 'left', join_style=1)
+    offset_r = skeleton_vector.parallel_offset(offset, 'right', join_style=1)
 
     if offset_l.geom_type == 'MultiLineString':
 
@@ -194,14 +434,12 @@ def offset_path(medial_axis, offset, plot_flag):
 
         offset = reverse_geom(offset)
 
-    # print(offset_r.geom_type)
-    # print('offset',offset)
     if plot_flag:
         ax.plot(*offset.xy)
 
     path = []
 
-    p = Polygon([*list(medial_axis.coords), *list(offset.coords)])
+    p = Polygon([*list(skeleton_vector.coords), *list(offset.coords)])
 
     x, y = p.exterior.coords.xy
     xy_poly = [(x, y) for x, y in zip(x, y)]
@@ -216,55 +454,55 @@ def cut(line):
 
     coords = list(line.coords)
     linePoly = Polygon(coords)
-    print('length',line.length)
-    print('area',linePoly.area)
-    
+    print('length', line.length)
+    print('area', linePoly.area)
+
     perimeter = line.length
-    equivalent_area_perimeter = 2.0*np.pi*np.sqrt(linePoly.area/np.pi)
-    print('equivalent area perimenter',equivalent_area_perimeter)
-    
-    if ( equivalent_area_perimeter / perimeter > 0.3 ):
-    
-        return line,True 
-       
+    equivalent_area_perimeter = 2.0 * np.pi * np.sqrt(linePoly.area / np.pi)
+    print('equivalent area perimenter', equivalent_area_perimeter)
+
+    if (equivalent_area_perimeter / perimeter > 0.3):
+
+        return line, True
+
     nph = 200
 
-    len_list = np.linspace(0,line.length,num=2*nph+1,endpoint=True)
+    len_list = np.linspace(0, line.length, num=2 * nph + 1, endpoint=True)
     coords_uniform = []
-    for Length in len_list:  
-    
-        ix,iy = line.interpolate(Length, normalized=False).xy
-        
-        coords_uniform.append((ix[0],iy[0]))
-    
+    for Length in len_list:
+
+        ix, iy = line.interpolate(Length, normalized=False).xy
+
+        coords_uniform.append((ix[0], iy[0]))
+
     line_uniform = LineString(coords_uniform)
-    print('length line uniform',line_uniform.length)
-     
+    print('length line uniform', line_uniform.length)
+
     bbox_max = 0.0
-    for i in range(nph+1):
-    
-        line_check = LineString(coords_uniform[i:i+nph+1])
-        line_Poly = Polygon(coords_uniform[i:i+nph+1])
-        print(i,line_check.length)
-        print(i,line_Poly.area)
-        
+    for i in range(nph + 1):
+
+        line_check = LineString(coords_uniform[i:i + nph + 1])
+        line_Poly = Polygon(coords_uniform[i:i + nph + 1])
+        print(i, line_check.length)
+        print(i, line_Poly.area)
+
         bbox_area = line_Poly.area
         if bbox_area > bbox_max:
-        
+
             line_opt = line_check
-            bbox_max = bbox_area 
-            print('i',i)
-                        
-    return line_opt,False          
+            bbox_max = bbox_area
+            print('i', i)
+
+    return line_opt, False
 
 
 @st.cache
-def raster_to_vector2(X, Y, skeleton,fract1,fract2):
+def raster_to_vector2(X, Y, skeleton, fract1, fract2):
 
     from shapely.geometry import shape, JOIN_STYLE
 
     cn = ax.contour(X, Y, skeleton, 1)
-    
+
     # Set a distance threshold to check if the contours are closed curves
     eps = 1e-5
 
@@ -275,39 +513,74 @@ def raster_to_vector2(X, Y, skeleton,fract1,fract2):
         # for each separate section of the contour line
         for pp in cc.get_paths():
             xy = []
-            # for each segment of that section            
+            # for each segment of that section
             for vv in pp.iter_segments():
                 xy.append(vv[0])
                 # print(vv[0])
             paths.append(np.vstack(xy))
-            
-            xv = [ vv[0][0] for vv in pp.iter_segments() ]
-            yv = [ vv[0][1] for vv in pp.iter_segments() ]
-            
-            
-            # Check if the contour is closed. 
-            closed = (abs(xv[0] - xv[-1]) <
-                      eps) and (abs(yv[0] - yv[-1]) < eps)
 
-            points = [(x,y) for x,y in zip(xv,yv)]
-            
-            if closed and ( LineString(points).length > ln_max ):
-            
+            xv = [vv[0][0] for vv in pp.iter_segments()]
+            yv = [vv[0][1] for vv in pp.iter_segments()]
+
+            # Check if the contour is closed.
+            closed = (abs(xv[0] - xv[-1]) < eps) and (abs(yv[0] - yv[-1]) <
+                                                      eps)
+
+            points = [(x, y) for x, y in zip(xv, yv)]
+
+            if closed and (LineString(points).length > ln_max):
+
                 ln = LineString(points)
                 poly_verts = points
-                
-                ln_max = ln.length
-            
-                print('number of points',len(xv))
-            
 
-    l1_1,closed = cut(ln)
-    
-    medial_axis = l1_1.simplify(skeleton_level, preserve_topology=True)
-    
-    return medial_axis,closed
-    
-    
+                ln_max = ln.length
+
+                print('number of points', len(xv))
+
+    l1_1, closed = cut(ln)
+
+    skeleton_vector = l1_1.simplify(skeleton_level, preserve_topology=True)
+
+    if skeleton_smoothing_level > 0:
+
+        x, y = skeleton_vector.coords.xy
+
+        coords = np.array([[x, y] for x, y in zip(x, y)])
+
+        coords = chaikins_corner_cutting(coords,
+                                         refinements=skeleton_smoothing_level)
+
+        skeleton_vector = LineString(coords)
+
+        # skeleton_range
+
+    x, y = skeleton_vector.coords.xy
+
+    line = []
+
+    for i in range(len(x) - 1):
+
+        coords = np.array([[x, y] for x, y in zip(x[i:], y[i:])])
+
+        partial_axis = LineString(coords)
+
+        line.append(partial_axis.length)
+
+    line.append(0.0)
+    line = np.array(line)
+    line = line / max(line) * 100.0
+    idx1 = (np.abs(line - skeleton_range[0])).argmin()
+    idx0 = (np.abs(line - skeleton_range[1])).argmin()
+
+    print(idx0, idx1)
+
+    coords = np.array([[x, y] for x, y in zip(x[idx0:idx1], y[idx0:idx1])])
+
+    skeleton_vector = LineString(coords)
+
+    return skeleton_vector, closed
+
+
 def file_selector(folder_path='.', ext='asc'):
     filenames = os.listdir(folder_path)
     filelist = []
@@ -320,26 +593,39 @@ def file_selector(folder_path='.', ext='asc'):
 
 
 @st.cache
-def save_netcdf(ascii_file,X,Y,slope, h_DEM , h, curv_var, top_variable, sigma=1.0):
+def save_netcdf(ascii_file,
+                X,
+                Y,
+                slope,
+                h_DEM,
+                h,
+                curv_var,
+                top_variable,
+                sigma=1.0):
 
-    Pmax1, Pmin1 = surfature(X,Y,h)
+    Pmax1, Pmin1 = surfature(X, Y, h)
 
-    Pmax1_norm = (Pmax1 - np.nanmin(Pmax1)) / (np.nanmax(Pmax1) - np.nanmin(Pmax1))
-    Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / (np.nanmax(Pmin1) - np.nanmin(Pmin1))
+    Pmax1_norm = (Pmax1 - np.nanmin(Pmax1)) / \
+        (np.nanmax(Pmax1) - np.nanmin(Pmax1))
+    Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / \
+        (np.nanmax(Pmin1) - np.nanmin(Pmin1))
 
     H_elems = hessian_matrix(slope, sigma=10.0, order='xy')
     # eigenvalues of hessian matrix
     Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
 
-    Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / (np.nanmax(Pmax2) - np.nanmin(Pmax2))
-    Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / (np.nanmax(Pmin2) - np.nanmin(Pmin2))
+    Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
+        (np.nanmax(Pmax2) - np.nanmin(Pmax2))
+    Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / \
+        (np.nanmax(Pmin2) - np.nanmin(Pmin2))
 
-    h_norm = ( h - np.nanmin(h) ) / (np.nanmax(h) - np.nanmin(h))
+    h_norm = (h - np.nanmin(h)) / (np.nanmax(h) - np.nanmin(h))
 
-    slope_norm = -( slope - np.nanmin(slope) ) / ( np.nanmax(slope) - np.nanmin(slope) )
+    slope_norm = -(slope - np.nanmin(slope)) / \
+        (np.nanmax(slope) - np.nanmin(slope))
 
     # create netcdf4 file
-    ncfilename = ascii_file.replace('.asc','.nc')
+    ncfilename = ascii_file.replace('.asc', '.nc')
 
     ncfile = netCDF4.Dataset(ncfilename, mode='w', format='NETCDF4')
 
@@ -348,7 +634,7 @@ def save_netcdf(ascii_file,X,Y,slope, h_DEM , h, curv_var, top_variable, sigma=1
     # unlimited axis (can be appended to).
     time_dim = ncfile.createDimension('time', None)
 
-    ncfile.title = ascii_file.replace('.asc',' analysis')
+    ncfile.title = ascii_file.replace('.asc', ' analysis')
 
     ncfile.Conventions = "CF-1.0"
     ncfile.subtitle = "My model data subtitle"
@@ -371,103 +657,121 @@ def save_netcdf(ascii_file,X,Y,slope, h_DEM , h, curv_var, top_variable, sigma=1
     z.standard_name = 'flow thickness'  # this is a CF standard name
     z.units = 'meters'
 
-   
     iter = 0
     t[iter] = 0.0
-       
+
     x[:] = X[0, :]
     y[:] = Y[:, 0]
 
     z[iter, :, :] = h_DEM
 
     # note: unlimited dimension is leftmost
-    var1 = ncfile.createVariable('elevation+max.curvature1+slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var1 = ncfile.createVariable('elevation+max.curvature1+slope',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var1.standard_name = 'elevation+max.curvature1+slope'  # this is a CF standard name
     var1.units = ''
-    top_var1 = ( h_norm + slope_norm + Pmax1_norm ) / 3.0
-    var1[iter,:,:] = top_var1
+    top_var1 = (h_norm + slope_norm + Pmax1_norm) / 3.0
+    var1[iter, :, :] = top_var1
 
     # note: unlimited dimension is leftmost
-    var2 = ncfile.createVariable('elevation+max.curvature1', np.float64, ('time', 'y', 'x'), zlib=True)
+    var2 = ncfile.createVariable('elevation+max.curvature1',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var2.standard_name = 'elevation+max.curvature1'  # this is a CF standard name
     var2.units = ''
-    top_var2 = 0.5 * ( h_norm + Pmax1_norm )
-    var2[iter,:,:] = top_var2
+    top_var2 = 0.5 * (h_norm + Pmax1_norm)
+    var2[iter, :, :] = top_var2
 
     # note: unlimited dimension is leftmost
-    var3 = ncfile.createVariable('max.curvature1+slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var3 = ncfile.createVariable('max.curvature1+slope',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var3.standard_name = 'max.curvature1+slope'  # this is a CF standard name
     var3.units = ''
-    top_var3 = 0.5 * ( slope_norm + Pmax1_norm )
-    var3[iter,:,:] = top_var3
+    top_var3 = 0.5 * (slope_norm + Pmax1_norm)
+    var3[iter, :, :] = top_var3
 
     # note: unlimited dimension is leftmost
-    var4 = ncfile.createVariable('elevation+slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var4 = ncfile.createVariable('elevation+slope',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var4.standard_name = 'elevation+slope'  # this is a CF standard name
     var4.units = ''
-    top_var4 = 0.5 * ( h_norm + slope_norm )
-    var4[iter,:,:] = top_var4
+    top_var4 = 0.5 * (h_norm + slope_norm)
+    var4[iter, :, :] = top_var4
 
     # note: unlimited dimension is leftmost
-    var5 = ncfile.createVariable('elevation', np.float64, ('time', 'y', 'x'), zlib=True)
+    var5 = ncfile.createVariable('elevation',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var5.standard_name = 'elevation'  # this is a CF standard name
     var5.units = ''
     top_var5 = h_norm
-    var5[iter,:,:] = top_var5
+    var5[iter, :, :] = top_var5
 
     # note: unlimited dimension is leftmost
-    var6 = ncfile.createVariable('max.curvature1', np.float64, ('time', 'y', 'x'), zlib=True)
+    var6 = ncfile.createVariable('max.curvature1',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var6.standard_name = 'max.curvature1'  # this is a CF standard name
     var6.units = ''
     top_var6 = Pmax1_norm
-    var6[iter,:,:] = top_var6
+    var6[iter, :, :] = top_var6
 
     # note: unlimited dimension is leftmost
-    var7 = ncfile.createVariable('slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var7 = ncfile.createVariable('slope',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var7.standard_name = 'slope'  # this is a CF standard name
     var7.units = ''
     top_var7 = slope_norm
-    var7[iter,:,:] = slope_norm
+    var7[iter, :, :] = slope_norm
 
     # note: unlimited dimension is leftmost
-    var8 = ncfile.createVariable('elevation+max.curvature2+slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var8 = ncfile.createVariable('elevation+max.curvature2+slope',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var8.standard_name = 'elevation+max.curvature2+slope'  # this is a CF standard name
     var8.units = ''
-    top_var8 = ( h_norm + slope_norm + Pmax2_norm ) / 3.0
-    var8[iter,:,:] = top_var8
+    top_var8 = (h_norm + slope_norm + Pmax2_norm) / 3.0
+    var8[iter, :, :] = top_var8
 
     # note: unlimited dimension is leftmost
-    var9 = ncfile.createVariable('elevation+max.curvature2', np.float64, ('time', 'y', 'x'), zlib=True)
+    var9 = ncfile.createVariable('elevation+max.curvature2',
+                                 np.float64, ('time', 'y', 'x'),
+                                 zlib=True)
     var9.standard_name = 'elevation+max.curvature2'  # this is a CF standard name
     var9.units = ''
-    top_var9 = 0.5 * ( h_norm + Pmax2_norm )
-    var9[iter,:,:] = top_var9
+    top_var9 = 0.5 * (h_norm + Pmax2_norm)
+    var9[iter, :, :] = top_var9
 
     # note: unlimited dimension is leftmost
-    var10 = ncfile.createVariable('max.curvature2+slope', np.float64, ('time', 'y', 'x'), zlib=True)
+    var10 = ncfile.createVariable('max.curvature2+slope',
+                                  np.float64, ('time', 'y', 'x'),
+                                  zlib=True)
     var10.standard_name = 'max.curvature2+slope'  # this is a CF standard name
     var10.units = ''
-    top_var10 = 0.5 * ( slope_norm + Pmax2_norm )
-    var10[iter,:,:] = top_var10
+    top_var10 = 0.5 * (slope_norm + Pmax2_norm)
+    var10[iter, :, :] = top_var10
 
     # note: unlimited dimension is leftmost
-    var11 = ncfile.createVariable('max.curvature2', np.float64, ('time', 'y', 'x'), zlib=True)
+    var11 = ncfile.createVariable('max.curvature2',
+                                  np.float64, ('time', 'y', 'x'),
+                                  zlib=True)
     var11.standard_name = 'max.curvature2'  # this is a CF standard name
     var11.units = ''
     top_var11 = Pmax2_norm
-    var11[iter,:,:] = top_var11
-
-
+    var11[iter, :, :] = top_var11
 
     ncfile.close()
 
 
 @st.cache
-def savebase_netcdf(X,Y,h_base):
-
+def savebase_netcdf(X, Y, h_base):
 
     # create netcdf4 file
-    ncfilename = ascii_file.replace('.asc','_base.nc')
+    ncfilename = ascii_file.replace('.asc', '_base.nc')
 
     ncfile = netCDF4.Dataset(ncfilename, mode='w', format='NETCDF4')
 
@@ -476,7 +780,7 @@ def savebase_netcdf(X,Y,h_base):
     # unlimited axis (can be appended to).
     time_dim = ncfile.createDimension('time', None)
 
-    ncfile.title = ascii_file.replace('.asc',' analysis')
+    ncfile.title = ascii_file.replace('.asc', ' analysis')
 
     ncfile.Conventions = "CF-1.0"
     ncfile.subtitle = "My model data subtitle"
@@ -499,10 +803,9 @@ def savebase_netcdf(X,Y,h_base):
     z.standard_name = 'flow thickness'  # this is a CF standard name
     z.units = 'meters'
 
-   
     iter = 0
     t[iter] = 0.0
-       
+
     x[:] = X[0, :]
     y[:] = Y[:, 0]
 
@@ -511,21 +814,24 @@ def savebase_netcdf(X,Y,h_base):
     ncfile.close()
 
 
-
 @st.cache
-def detect_ridges(X,Y,slope, h, curv_var, top_variable, sigma=1.0):
+def detect_ridges(X, Y, slope, h, curv_var, top_variable, sigma=1.0):
 
-    Pmax1, Pmin1 = surfature(X,Y,h)
+    Pmax1, Pmin1 = surfature(X, Y, h)
 
-    Pmax1_norm = (Pmax1 - np.nanmin(Pmax1)) / (np.nanmax(Pmax1) - np.nanmin(Pmax1))
-    Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / (np.nanmax(Pmin1) - np.nanmin(Pmin1))
+    Pmax1_norm = (Pmax1 - np.nanmin(Pmax1)) / \
+        (np.nanmax(Pmax1) - np.nanmin(Pmax1))
+    Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / \
+        (np.nanmax(Pmin1) - np.nanmin(Pmin1))
 
     H_elems = hessian_matrix(slope, sigma=10.0, order='xy')
     # eigenvalues of hessian matrix
     Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
 
-    Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / (np.nanmax(Pmax2) - np.nanmin(Pmax2))
-    Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / (np.nanmax(Pmin2) - np.nanmin(Pmin2))
+    Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
+        (np.nanmax(Pmax2) - np.nanmin(Pmax2))
+    Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / \
+        (np.nanmax(Pmin2) - np.nanmin(Pmin2))
 
     if curv_var == 'elevation':
 
@@ -537,49 +843,51 @@ def detect_ridges(X,Y,slope, h, curv_var, top_variable, sigma=1.0):
         Pmax_norm = Pmax2_norm
         Pmin_norm = Pmin2_norm
 
-    h_norm = ( h - np.nanmin(h) ) / (np.nanmax(h) - np.nanmin(h))
+    h_norm = (h - np.nanmin(h)) / (np.nanmax(h) - np.nanmin(h))
 
-    slope_norm = -( slope - np.nanmin(slope) ) / ( np.nanmax(slope) - np.nanmin(slope) )
-            
-    print('top variable',top_variable)
+    slope_norm = -(slope - np.nanmin(slope)) / \
+        (np.nanmax(slope) - np.nanmin(slope))
+
+    print('top variable', top_variable)
 
     if top_variable == 'elevation+max.curvature+slope':
-    
-        top_var = ( h_norm + slope_norm + Pmax_norm ) / 3.0
-       
+
+        top_var = (h_norm + slope_norm + Pmax_norm) / 3.0
+
     elif top_variable == 'elevation+max.curvature':
-    
-        top_var = 0.5 * ( h_norm + Pmax_norm )
-    
-    elif top_variable ==  'max.curvature+slope':
 
-        top_var = 0.5 * (slope_norm + Pmax_norm )
+        top_var = 0.5 * (h_norm + Pmax_norm)
 
-    elif top_variable ==  'elevation+slope':
+    elif top_variable == 'max.curvature+slope':
 
-        top_var = 0.5 * ( h_norm + slope_norm ) 
+        top_var = 0.5 * (slope_norm + Pmax_norm)
 
-    elif top_variable ==  'elevation':
+    elif top_variable == 'elevation+slope':
+
+        top_var = 0.5 * (h_norm + slope_norm)
+
+    elif top_variable == 'elevation':
 
         top_var = h_norm
-        
-    elif top_variable ==  'min.curvature':
+
+    elif top_variable == 'min.curvature':
 
         top_var = Pmin_norm
 
-    elif top_variable ==  'max.curvature':
+    elif top_variable == 'max.curvature':
 
         top_var = Pmax_norm
 
-    elif top_variable ==  'slope':
+    elif top_variable == 'slope':
 
         top_var = slope_norm
 
-    norm_image = cv2.normalize(top_var,None,
-                                   alpha=0,
-                                   beta=255,
-                                   norm_type=cv2.NORM_MINMAX,
-                                   dtype=cv2.CV_32F)
+    norm_image = cv2.normalize(top_var,
+                               None,
+                               alpha=0,
+                               beta=255,
+                               norm_type=cv2.NORM_MINMAX,
+                               dtype=cv2.CV_32F)
 
     norm_image = norm_image.astype(np.uint8)
 
@@ -597,7 +905,6 @@ def apply_thresh(norm_image):
     # threshold (level of grey>thresh_level)
     img = cv2.threshold(blur_image, thresh_level, 255, cv2.THRESH_BINARY)[1]
 
-    
     # remove small holes
     # kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, (10, 10))
     # opening = cv2.morphologyEx(img, cv2.MORPH_OPEN, kernel)
@@ -808,9 +1115,8 @@ if __name__ == '__main__':
     h_DEM = h
 
     smoothing = st.sidebar.slider("Smoothing", 0, 20, 5)
-    smoothing = 2*smoothing+1
+    smoothing = 2 * smoothing + 1
     h = cv2.GaussianBlur(h, (smoothing, smoothing), 0)
-
 
     ls = LightSource(azdeg=135, altdeg=45)
 
@@ -824,11 +1130,12 @@ if __name__ == '__main__':
 
         ax.imshow(ls.hillshade(h, vert_exag=1.0, dx=delta_x, dy=delta_y),
                   cmap='gray',
-                  extent=extent,origin='lower')
+                  extent=extent,
+                  origin='lower')
 
     else:
 
-        ax.imshow(h, cmap='gray', extent=extent,origin='lower')
+        ax.imshow(h, cmap='gray', extent=extent, origin='lower')
 
     grad_h, h_x, h_y, slope = compute_slope(h, delta_x, delta_y)
 
@@ -841,32 +1148,41 @@ if __name__ == '__main__':
 
     if slope_check:
 
-        ax.imshow(slope, cmap='gray', extent=extent,origin='lower', alpha=slope_alpha)
+        ax.imshow(slope,
+                  cmap='gray',
+                  extent=extent,
+                  origin='lower',
+                  alpha=slope_alpha)
 
     st.sidebar.markdown("""---""")
-    
-    curv_var = st.sidebar.selectbox('Curvature variable',(
-                     'elevation',
-                     'slope')
-                    ) 
-    
-    top_variable = st.sidebar.selectbox('Cone top detection variable',(
-                     #'elevation+min.curvature+slope',
-                     #'elevation+min.curvature',
-                     #'min.curvature+slope',
-                     'elevation+max.curvature+slope',
-                     'elevation+max.curvature',
-                     'max.curvature+slope',
-                     'elevation+slope',
-                     'elevation',
-                     #'min.curvature',
-                     'max.curvature',
-                     'slope')
-                    ) 
 
+    curv_var = st.sidebar.selectbox('Curvature variable',
+                                    ('elevation', 'slope'))
 
+    top_variable = st.sidebar.selectbox(
+        'Cone top detection variable',
+        (
+            # 'elevation+min.curvature+slope',
+            # 'elevation+min.curvature',
+            # 'min.curvature+slope',
+            'elevation+max.curvature+slope',
+            'elevation+max.curvature',
+            'max.curvature+slope',
+            'elevation+slope',
+            'elevation',
+            # 'min.curvature',
+            'max.curvature',
+            'slope'))
 
-    norm_image = detect_ridges(X,Y,slope, h, curv_var, top_variable, sigma=10.0, )
+    norm_image = detect_ridges(
+        X,
+        Y,
+        slope,
+        h,
+        curv_var,
+        top_variable,
+        sigma=10.0,
+    )
 
     sec_der_plot_check = st.sidebar.checkbox('Slope Second Derivative Plot')
 
@@ -877,12 +1193,24 @@ if __name__ == '__main__':
     save_top_var_check = st.sidebar.button('NetCDF for top save')
 
     if save_top_var_check:
-    
-      save_netcdf(ascii_file,X,Y,slope, h_DEM , h, curv_var, top_variable, sigma=1.0)        
+
+        save_netcdf(ascii_file,
+                    X,
+                    Y,
+                    slope,
+                    h_DEM,
+                    h,
+                    curv_var,
+                    top_variable,
+                    sigma=1.0)
 
     if sec_der_plot_check:
 
-        ax.imshow(norm_image, cmap='gray', extent=extent,origin='lower', alpha=a_alpha)
+        ax.imshow(norm_image,
+                  cmap='gray',
+                  extent=extent,
+                  origin='lower',
+                  alpha=a_alpha)
 
     st.sidebar.markdown("""---""")
 
@@ -904,68 +1232,72 @@ if __name__ == '__main__':
 
         # get a copy of the gray color map
         my_cmap = copy.copy(plt.cm.get_cmap('viridis'))
-        
-        ax.imshow(binary, cmap=my_cmap, extent=extent,origin='lower', alpha=thresh_alpha)
+
+        ax.imshow(binary,
+                  cmap=my_cmap,
+                  extent=extent,
+                  origin='lower',
+                  alpha=thresh_alpha)
 
         skeleton_check = st.sidebar.checkbox('Skeleton')
         skeleton_opacity = st.sidebar.slider("Skeleton opacity", 0, 100, 50)
         skeleton_alpha = skeleton_opacity / 100.0
-        
+
     else:
-    
-        skeleton_check = False    
-        
-       
+
+        skeleton_check = False
+
     if skeleton_check:
 
         # create the skeleton of the connected component
         # the skeleton is still a raster, but reduced to
         # 1 pixel wide representation
-        
+
         skeleton_binary = skeletonize(binary, method='lee')
-        print('size',binary.shape[0],binary.shape[1],binary.shape[0]*binary.shape[1])
-        print('unique',np.unique(skeleton_binary))
+        print('size', binary.shape[0], binary.shape[1],
+              binary.shape[0] * binary.shape[1])
+        print('unique', np.unique(skeleton_binary))
         for i in np.unique(skeleton_binary):
-        
-            print(i,np.sum(skeleton_binary==i))
-            
-        img = cv2.threshold(skeleton_binary, 127, 255, cv2.THRESH_BINARY)[1]  # ensure binary
-        
+
+            print(i, np.sum(skeleton_binary == i))
+
+        img = cv2.threshold(skeleton_binary, 127, 255,
+                            cv2.THRESH_BINARY)[1]  # ensure binary
+
         img = np.zeros_like(skeleton_binary)
-        img[skeleton_binary==0] = 1
+        img[skeleton_binary == 0] = 1
         for i in np.unique(img):
-        
-            print('img',i,np.sum(img==i))
-         
+
+            print('img', i, np.sum(img == i))
+
         from scipy import ndimage
-        labeled, nr_objects = ndimage.label(img > 0.5) 
+        labeled, nr_objects = ndimage.label(img > 0.5)
         print("Number of objects is {}".format(nr_objects))
-        print('Labels',np.unique(labeled))
+        print('Labels', np.unique(labeled))
         # ax.imshow(labeled, extent=extent,origin='lower', alpha=skeleton_alpha)
-        
+
         if nr_objects > 1:
-        
+
             # loop to search for connected components with largest mean elevation
             label_opt = 0
             label_sum = 0
-            for label in range(nr_objects+1):
-        
-                label_check = np.sum(labeled==label)        
-                print('label,label_check',label,label_check)
-            
-                if ( label_check > label_sum ):
-            
+            for label in range(nr_objects + 1):
+
+                label_check = np.sum(labeled == label)
+                print('label,label_check', label, label_check)
+
+                if (label_check > label_sum):
+
                     label_sum = label_check
                     label_opt = label
-                
-        
+
             img = np.zeros_like(skeleton_binary)
-            img[labeled==label_opt] = 1
+            img[labeled == label_opt] = 1
             # ax.imshow(img, cmap=my_cmap, extent=extent,origin='lower', alpha=skeleton_alpha)
-        
+
             # remove small holes
-            kernel = np.ones((5,5), np.uint8)
- 
+            kernel = np.ones((5, 5), np.uint8)
+
             # The first parameter is the original image,
             # kernel is the matrix with which image is
             # convolved and third parameter is the number
@@ -974,47 +1306,55 @@ if __name__ == '__main__':
             img_dilation = cv2.dilate(img, kernel, iterations=1)
             img_erosion = cv2.erode(img_dilation, kernel, iterations=1)
             # ax.imshow(img_erosion, cmap=my_cmap, extent=extent,origin='lower', alpha=skeleton_alpha)
-        
+
             skeleton = 255 * img_erosion
-    
-        else: 
-        
+
+        else:
+
             skeleton = 255 * skeleton_binary
-            pruning_size = st.sidebar.slider("Skeleton pruning size", 0, 1000, 50)
-            pruned_skeleton, segmented_img, segment_objects = pcv.morphology.prune(skel_img=skeleton, size=pruning_size)            
+            pruning_size = st.sidebar.slider("Skeleton pruning size", 0, 1000,
+                                             50)
+            pruned_skeleton, segmented_img, segment_objects = pcv.morphology.prune(
+                skel_img=skeleton, size=pruning_size)
             skeleton = pruned_skeleton.astype(float)
 
-        ax.imshow(skeleton, cmap=my_cmap, extent=extent,origin='lower', alpha=skeleton_alpha)
+        ax.imshow(skeleton,
+                  cmap=my_cmap,
+                  extent=extent,
+                  origin='lower',
+                  alpha=skeleton_alpha)
 
-
-        medial_axis_check = st.sidebar.checkbox('Skeleton vector')
-        skeleton_level = st.sidebar.slider("Skeleton vector simplify level", 0, 20, 5)
+        skeleton_vector_check = st.sidebar.checkbox('Skeleton vector')
+        skeleton_level = st.sidebar.slider("Skeleton vector simplify level", 0,
+                                           20, 5)
+        skeleton_smoothing_level = st.sidebar.slider(
+            "Skeleton vector smoothing level", 0, 20, 0)
+        skeleton_range = st.sidebar.slider('Select a range of values', 0, 100,
+                                           (0, 100))
 
     else:
-        
-        medial_axis_check = False
 
+        skeleton_vector_check = False
 
-    if medial_axis_check:
+    if skeleton_vector_check:
 
         # we compute a vector representation of the skeleton
-        # medial_axis is a polyline defined by points
-            
-        medial_axis,closed = raster_to_vector2(X, Y, skeleton,0.5,0.6)
+        # skeleton_vector is a polyline defined by points
 
-        print('Closed',closed)
-        ax.plot(*medial_axis.xy)
+        skeleton_vector, closed = raster_to_vector2(X, Y, skeleton, 0.5, 0.6)
+
+        print('Closed', closed)
+        ax.plot(*skeleton_vector.xy, 'g')
 
         if closed:
             # compute buffer area (points within a fixed distance from medial axis)
-            path = offset_path(medial_axis, dx, True)
+            path = offset_path(skeleton_vector, dx, False)
 
             pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
             # find points within path
             skeleton = path.contains_points(pixel_coordinates).reshape(
-                       X.shape[0], X.shape[1])
-
+                X.shape[0], X.shape[1])
 
     # -------------- FLANK ANALYSIS --------------------
 
@@ -1023,13 +1363,12 @@ if __name__ == '__main__':
         flank_check = st.sidebar.checkbox('Flank')
         flank_var = 'Slow'
 
-        correction_factor = st.sidebar.slider("Scalar dot", 0.00, 1.00,
-                                          0.50)
+        correction_factor = st.sidebar.slider("Scalar dot", 0.00, 1.00, 0.50)
 
         flank_opacity = st.sidebar.slider("Flank opacity", 0, 100, 50)
         flank_alpha = flank_opacity / 100.0
 
-    # -------------- FLANK ANALYSIS --------------------
+        # -------------- FLANK ANALYSIS --------------------
 
         st.sidebar.markdown("""---""")
 
@@ -1039,7 +1378,7 @@ if __name__ == '__main__':
         buffer_alpha = buffer_opacity / 100.0
 
     else:
-    
+
         flank_check = False
         buffer_check = False
 
@@ -1076,61 +1415,74 @@ if __name__ == '__main__':
 
             scal_dot = img * scal_dot
 
-        ax.imshow(scal_dot, cmap='gray', extent=extent,origin='lower', alpha=flank_alpha)
+        ax.imshow(scal_dot,
+                  cmap='gray',
+                  extent=extent,
+                  origin='lower',
+                  alpha=flank_alpha)
         scal_dot_scaled = 255 * scal_dot
 
-
         if buffer_check:
-        
+
             mask_check = True
-        
-                                   
+
     else:
-    
+
         mask_check = False
 
     if buffer_check:
-    
+
         # compute buffer area (points within a fixed distance from medial axis)
-        path = offset_path(medial_axis, buffer_distance, True)
+        path = offset_path(skeleton_vector, buffer_distance, False)
 
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
         # find points within path
         img_buffer = path.contains_points(pixel_coordinates).reshape(
-                X.shape[0], X.shape[1])
-    
-        ax.imshow(img_buffer, cmap='gray', extent=extent,origin='lower', alpha=buffer_alpha)
-        
+            X.shape[0], X.shape[1])
+
+        ax.imshow(img_buffer,
+                  cmap='gray',
+                  extent=extent,
+                  origin='lower',
+                  alpha=buffer_alpha)
+
         if flank_check:
-        
+
             mask_check = True
-        
+
     else:
-    
-        mask_check = False   
-        
-   
+
+        mask_check = False
+
     flank_thr_check = False
-    
+
     if mask_check:
-    
+
         # -------------- FLANK THRESHOLD --------------------
         st.sidebar.markdown("""---""")
 
         flank_thr_check = st.sidebar.checkbox('Mask save')
         flank_radio = st.sidebar.radio('Select image:',
-                                   ['Buffer', 'Flank', 'Intersection'])
+                                       ['Buffer', 'Flank', 'Intersection'])
 
         mask_opacity = st.sidebar.slider("Mask opacity", 0, 100, 50)
         mask_alpha = mask_opacity / 100.0
-        
 
     if flank_thr_check:
-        
+
         img_01 = img
-                
-        img_2 = img_buffer        
+
+        img_2 = img_buffer
+
+        # compute buffer area (points within a fixed distance from medial axis)
+        path3 = offset_path(skeleton_vector, 20, False)
+
+        pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
+
+        # find points within path
+        img_3 = path3.contains_points(pixel_coordinates).reshape(
+            X.shape[0], X.shape[1])
 
         if flank_radio == 'Buffer':
 
@@ -1138,12 +1490,13 @@ if __name__ == '__main__':
 
         elif flank_radio == 'Flank':
 
-            mask = img_01
+            mask = np.logical_or(img_01, img_3)
 
         else:
 
             # find intersection of buffer and flank
             img = np.logical_and(img_01, img_2)
+            img = np.logical_or(img, img_3)
             img = img.astype('uint8')
 
             num_labels, labels = cv2.connectedComponents(img)
@@ -1171,7 +1524,11 @@ if __name__ == '__main__':
 
             mask = img
 
-        ax.imshow(mask, cmap='gray', extent=extent,origin='lower', alpha=mask_alpha)
+        ax.imshow(mask,
+                  cmap='gray',
+                  extent=extent,
+                  origin='lower',
+                  alpha=mask_alpha)
 
         # Save mask on ascii raster file
         header = "ncols     %s\n" % h.shape[1]
@@ -1185,13 +1542,12 @@ if __name__ == '__main__':
 
         print('mask min max', np.nanmin(img), np.nanmax(img))
 
-
         edt = ndimage.distance_transform_edt(skeleton == 0)
 
         edt *= dx
-        
+
         dist_mask = edt
-        dist_mask[mask==0] = -9999
+        dist_mask[mask == 0] = -9999
 
         np.savetxt(temp_path + output_full,
                    np.flipud(dist_mask),
@@ -1208,16 +1564,17 @@ if __name__ == '__main__':
         st.sidebar.markdown("""---""")
 
         volume_check = st.sidebar.checkbox('Volume analysis')
-        min_base_distance = st.sidebar.slider("Minimum base distance", 10, buffer_distance, 10)
+        min_base_distance = st.sidebar.slider("Minimum base distance", 10,
+                                              buffer_distance, 10)
 
     else:
-    
+
         volume_check = False
 
     if volume_check:
 
         fig_c, ax_c = plt.subplots()
-        
+
         cn = ax_c.contour(X, Y, mask, 1)
 
         base_len = 0
@@ -1227,124 +1584,55 @@ if __name__ == '__main__':
             # for each separate section of the contour line
             for pp in cc.get_paths():
                 xy = []
-                # for each segment of that section            
+                # for each segment of that section
                 for vv in pp.iter_segments():
                     xy.append(vv[0])
                     # print(vv[0])
                 paths.append(np.vstack(xy))
-            
-                xv = [ vv[0][0] for vv in pp.iter_segments() ]
-                yv = [ vv[0][1] for vv in pp.iter_segments() ]
-            
+
+                xv = [vv[0][0] for vv in pp.iter_segments()]
+                yv = [vv[0][1] for vv in pp.iter_segments()]
+
                 if len(xv) > base_len:
-                
+
                     x_cnt = xv
                     y_cnt = yv
                     base_len = len(xv)
-        
-        
+
         line_cnt = LineString(zip(x_cnt, y_cnt))
         line_cnt = line_cnt.simplify(20.0, preserve_topology=False)
-                
+
         x_cnt, y_cnt = line_cnt.coords.xy
-        
+
         coords_cnt = []
         counter = 0
         for (x, y) in zip(x_cnt, y_cnt):
 
-            dist = medial_axis.distance(Point(x, y))
+            dist = skeleton_vector.distance(Point(x, y))
 
             if (dist > min_base_distance):
 
-                #coords_cnt.append((x,y))
-                
-                coords_cnt.insert(counter, (x,y))
+                # coords_cnt.append((x,y))
+
+                coords_cnt.insert(counter, (x, y))
                 counter += 1
-                ax.plot(x,y,'xk')
-                
-                
+                ax.plot(x, y, 'xk')
+
             else:
-            
-                counter = 0    
-                           
+
+                counter = 0
+
         line_cnt = LineString(coords_cnt)
-        
-        print('line_cnt length',line_cnt.length)
 
-        len_list = np.linspace(0,line_cnt.length,num=20,endpoint=True)
-        coords_uniform = []
-        for Length in len_list:  
-    
-            ix,iy = line_cnt.interpolate(Length, normalized=False).xy
-        
-            coords_uniform.append((ix[0],iy[0]))
-            # ax.plot(ix[0],iy[0],'.r')
-        
-        line_uni = LineString(coords_uniform)
-        
-        x_uni, y_uni = line_uni.coords.xy
-        x_base = []
-        y_base = []
-        h_base = []
-        
-        for (x, y) in zip(x_uni, y_uni):
+        print('line_cnt length', line_cnt.length)
 
-            dist = line_cnt.distance(Point(x, y))
-
-            if (dist < 10.0):
-
-                ix = np.minimum(int(np.floor((x - x_min) / dx)),
-                                X.shape[1] - 2)
-                iy = np.minimum(int(np.floor((y - y_min) / dx)),
-                                Y.shape[0] - 2)
-
-                ix1 = ix + 1
-                iy1 = iy + 1
-
-                alfax = (x - X[0, ix]) / dx
-                alfay = (y - Y[iy, 0]) / dy
-
-                z = alfay * (alfax * h[iy1, ix1] + (1.0 - alfax) * h[iy1, ix]) + (1.0 - alfay) * (alfax * h[iy, ix1] +
-                      (1.0 - alfax) * h[iy, ix])
-                      
-
-                if z == z:
-
-                    x_base.append(x)
-                    y_base.append(y)
-                    h_base.append(z)
-                    print(h[iy1, ix1],h[iy1, ix],h[iy, ix1],h[iy, ix])
-                    print(x,y,z)
-                    
-        
-        ax.plot(x_base,y_base,'.r')
-        
-        x_base_avg = np.mean(x_base)         
-        y_base_avg = np.mean(y_base)
-        print('x_base_avg',x_base_avg)
-        print('y_base_avg',y_base_avg)
-        
-        x_base_rel = x_base - x_base_avg
-        y_base_rel = y_base - y_base_avg
-
-        # print('h_base',h_base)
-
-        # create a 2D array with x,y,h of top_points
-        data = np.c_[np.array(x_base_rel), np.array(y_base_rel), np.array(h_base)]
-        # https://stackoverflow.com/questions/55711689/3d-plane-fitting-using-scipy-least-squares-producing-completely-wrong-fit
-        A = np.c_[data[:, 0], data[:, 1], np.ones(data.shape[0])]
-        C, _, _, _ = scipy.linalg.lstsq(A, data[:, 2])  # coefficients
-
-        print('C', C)
-
-        # evaluate the elevation on the base plane for gridpoints
-        h_base = C[0] * ( X - x_base_avg ) + C[1] * ( Y - y_base_avg ) + C[2]
+        C_base, h_base = plane_fit(line_cnt,X,Y,h)
 
         save_base_var_check = st.sidebar.button('NetCDF for base save')
 
         if save_base_var_check:
 
-            savebase_netcdf(X,Y,h_base )
+            savebase_netcdf(X, Y, h_base)
 
         h_mask = np.ma.masked_where(mask == 0, h - h_base)
 
@@ -1353,19 +1641,21 @@ if __name__ == '__main__':
         print('flank_vol', flank_vol)
 
         st.sidebar.write('Flank volume =', flank_vol, 'm3')
-        st.sidebar.write('Base plane z =', C[2],'+',C[0],'x_rel +',C[1],'y_rel')
+        st.sidebar.write('Base plane z =', C_base[2], '+', C_base[0],
+                         'x_rel +', C_base[1], 'y_rel')
 
     # -------------- SLOPE ANALYSIS --------------------
 
     if flank_thr_check:
-    
+
         st.sidebar.markdown("""---""")
 
         slope_check = st.sidebar.checkbox('Slope analysis')
         smooth_level = st.sidebar.slider("Slope smoothing level", 0, 20, 5)
+        slope_fit_check = st.sidebar.checkbox('Slope fitting')
 
     else:
-    
+
         slope_check = False
 
     if slope_check:
@@ -1444,100 +1734,122 @@ if __name__ == '__main__':
         ax_slope2.errorbar(dist_half, slp_mean, yerr=slp_std)
         ax_slope2.set_xlabel('distance from top [m]')
         ax_slope2.set_ylabel('slope [degrees]')
-        
-        
-        p0 = (33, 0.01, 0.0) # start with values near those we expect
-        params, cv = scipy.optimize.curve_fit(monoExp, dist_half[1:], slp_mean[1:], p0)
-        m_fit, t_fit, b_fit = params
 
-        ax_slope2.plot(dist_half, monoExp(dist_half, m_fit, t_fit, b_fit), '--', label="fitted")
+        if slope_fit_check:
 
+            p0 = (33, 0.01, 0.0)  # start with values near those we expect
+            params, cv = scipy.optimize.curve_fit(monoExp, dist_half[1:],
+                                                  slp_mean[1:], p0)
+            m_fit, t_fit, b_fit = params
 
+            ax_slope2.plot(dist_half,
+                           monoExp(dist_half, m_fit, t_fit, b_fit),
+                           '--',
+                           label="fitted")
 
     # -------------- SYNTHETIC CONE --------------------
 
     if flank_thr_check:
-    
+
         st.sidebar.markdown("""---""")
 
         synth_check = st.sidebar.checkbox('Synthetic cone')
+        top_linear_check = st.sidebar.checkbox('Linear fit of cone top')
         synth_opacity = st.sidebar.slider("Synthetic cone opacity", 0, 100, 50)
         synth_alpha = synth_opacity / 100.0
 
         cr_slope = st.sidebar.number_input("Slope angle",
-                                       min_value=5,
-                                       max_value=40,
-                                       value=33,
-                                       step=1)
-        
-    else:
-    
-        synth_check = False
+                                           min_value=5,
+                                           max_value=40,
+                                           value=33,
+                                           step=1)
 
+    else:
+
+        synth_check = False
 
     if synth_check:
 
-        edt, inds = ndimage.distance_transform_edt(skeleton == 0,
+        if top_linear_check:
+
+            C_top, h_top = plane_fit(skeleton_vector,X,Y,h)
+
+        else:
+
+            h_top = h
+
+        buffer_distance = 1
+        # compute buffer area (points within a fixed distance from medial axis)
+        path = offset_path(skeleton_vector, buffer_distance, False)
+
+        pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
+
+        # find points within path
+        img_buffer = path.contains_points(pixel_coordinates).reshape(
+            X.shape[0], X.shape[1])
+
+        edt, inds = ndimage.distance_transform_edt(img_buffer == 0,
                                                    return_indices=True)
+
+        # edt, inds = ndimage.distance_transform_edt(skeleton == 0,
+        #                                            return_indices=True)
 
         edt *= dx
 
-        
         # width_cone = h_cone / np.tan(np.radians(cr_slope))
         # edt = np.minimum(edt, width_cone)
 
         # synth_cone = -(edt - width_cone) / width_cone * h_cone
 
         # print('Volume = ',np.sum(synth_cone))
-        
-        h_temp = h[tuple(inds)] - edt * np.tan(np.radians(cr_slope))
+
+        h_temp = h_top[tuple(inds)] - edt * np.tan(np.radians(cr_slope))
         smoothing = 39
         h_temp = cv2.GaussianBlur(h_temp, (smoothing, smoothing), 0)
 
         h0 = 0.0
 
-        synth_cone = np.maximum(h_base,h_temp+h0)
+        synth_cone = np.maximum(h_base, h_temp + h0)
         synth_cone = np.ma.masked_where(mask == 0, synth_cone)
-        synth_vol0 = dx * dy * np.nansum(synth_cone-h_base)
+        synth_vol0 = dx * dy * np.nansum(synth_cone - h_base)
         print('synth_vol0', synth_vol0)
 
         if synth_vol0 < flank_vol:
-        
+
             h2 = 300.0
-            synth_cone = np.maximum(h_base,h_temp+h2)
+            synth_cone = np.maximum(h_base, h_temp + h2)
             synth_cone = np.ma.masked_where(mask == 0, synth_cone)
-            synth_vol2 = dx * dy * np.nansum(synth_cone-h_base)
+            synth_vol2 = dx * dy * np.nansum(synth_cone - h_base)
             print('synth_vol2', synth_vol2)
 
         for i in range(20):
-        
-            h1 = 0.5 * ( h0+h2 )
-            synth_cone = np.maximum(h_base,h_temp+h1)
+
+            h1 = 0.5 * (h0 + h2)
+            synth_cone = np.maximum(h_base, h_temp + h1)
             synth_cone = np.ma.masked_where(mask == 0, synth_cone)
-            synth_vol1 = dx * dy * np.nansum(synth_cone-h_base)
-            print('h1',h1)
+            synth_vol1 = dx * dy * np.nansum(synth_cone - h_base)
+            print('h1', h1)
             print('synth_vol1', synth_vol1)
 
-            if ( synth_vol1 < flank_vol ):
-            
+            if (synth_vol1 < flank_vol):
+
                 h0 = h1
-                
+
             else:
-            
+
                 h2 = h1
-        
-        synth_cone = np.maximum(h_base,h_temp+h1)
-                           
+
+        synth_cone = np.maximum(h_base, h_temp + h1)
+
         # synth_cone = np.maximum(h_base,h_base + h_cone - edt * np.tan(np.radians(cr_slope)))
-
-
 
         ax.imshow(ls.hillshade(synth_cone,
                                vert_exag=1.0,
                                dx=delta_x,
                                dy=delta_y),
                   cmap='gray',
-                  extent=extent,origin='lower',
+                  extent=extent,
+                  origin='lower',
                   alpha=synth_alpha)
 
         # synth_mask = np.ma.masked_where(mask > 0, synth_cone)
@@ -1558,7 +1870,6 @@ if __name__ == '__main__':
             'buffer_distance': [buffer_distance],
             'flank_radio': [flank_radio],
             'Slope angle': [cr_slope]
-            
         })
 
         filename = ascii_file.replace('.asc', '.csv')
@@ -1595,7 +1906,6 @@ if __name__ == '__main__':
                                        f,
                                        file_name=output_full)
 
-        
     # -------------- SAVE USER INPUT --------------------
 
     for filename in os.listdir(temp_path):
