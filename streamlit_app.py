@@ -508,7 +508,7 @@ def raster_to_vector2(X, Y, skeleton, fract1, fract2):
 
     from shapely.geometry import shape, JOIN_STYLE
 
-    cn = ax.contour(X, Y, skeleton, 1)
+    cn = ax.contour(X, Y, skeleton, 1, alpha=0)
 
     # Set a distance threshold to check if the contours are closed curves
     eps = 1e-5
@@ -607,7 +607,7 @@ def save_netcdf(ascii_file,
                 h_DEM,
                 h,
                 curv_var,
-                top_variable,
+                curvature_variable,
                 sigma=1.0):
 
     Pmax1, Pmin1 = surfature(X, Y, h)
@@ -822,7 +822,7 @@ def savebase_netcdf(X, Y, h_base):
 
 
 @st.cache
-def detect_ridges(X, Y, slope, h, curv_var, top_variable, sigma=1.0):
+def detect_ridges(X, Y, slope, h, curv_var, curvature_variable, sigma=1.0):
 
     Pmax1, Pmin1 = surfature(X, Y, h)
 
@@ -855,37 +855,37 @@ def detect_ridges(X, Y, slope, h, curv_var, top_variable, sigma=1.0):
     slope_norm = -(slope - np.nanmin(slope)) / \
         (np.nanmax(slope) - np.nanmin(slope))
 
-    print('top variable', top_variable)
+    print('top variable', curvature_variable)
 
-    if top_variable == 'elevation+max.curvature+slope':
+    if curvature_variable == 'elevation+max.curvature+slope':
 
         top_var = (h_norm + slope_norm + Pmax_norm) / 3.0
 
-    elif top_variable == 'elevation+max.curvature':
+    elif curvature_variable == 'elevation+max.curvature':
 
         top_var = 0.5 * (h_norm + Pmax_norm)
 
-    elif top_variable == 'max.curvature+slope':
+    elif curvature_variable == 'max.curvature+slope':
 
         top_var = 0.5 * (slope_norm + Pmax_norm)
 
-    elif top_variable == 'elevation+slope':
+    elif curvature_variable == 'elevation+slope':
 
         top_var = 0.5 * (h_norm + slope_norm)
 
-    elif top_variable == 'elevation':
+    elif curvature_variable == 'elevation':
 
         top_var = h_norm
 
-    elif top_variable == 'min.curvature':
+    elif curvature_variable == 'min.curvature':
 
         top_var = Pmin_norm
 
-    elif top_variable == 'max.curvature':
+    elif curvature_variable == 'max.curvature':
 
         top_var = Pmax_norm
 
-    elif top_variable == 'slope':
+    elif curvature_variable == 'slope':
 
         top_var = slope_norm
 
@@ -1121,9 +1121,11 @@ if __name__ == '__main__':
 
     h_DEM = h
 
-    smoothing = st.sidebar.slider("Smoothing", 0, 20, 5)
-    smoothing = 2 * smoothing + 1
-    h = cv2.GaussianBlur(h, (smoothing, smoothing), 0)
+    smoothing_level = st.sidebar.slider("Smoothing", 0, 20, 5)
+
+    # Gaussian blur wants odd value
+    smoothing_odd = 2 * smoothing_level + 1
+    h = cv2.GaussianBlur(h, (smoothing_odd, smoothing_odd), 0)
 
     ls = LightSource(azdeg=135, altdeg=45)
 
@@ -1166,7 +1168,7 @@ if __name__ == '__main__':
     curv_var = st.sidebar.selectbox('Curvature variable',
                                     ('elevation', 'slope'))
 
-    top_variable = st.sidebar.selectbox(
+    curvature_variable = st.sidebar.selectbox(
         'Cone top detection variable',
         (
             # 'elevation+min.curvature+slope',
@@ -1187,7 +1189,7 @@ if __name__ == '__main__':
         slope,
         h,
         curv_var,
-        top_variable,
+        curvature_variable,
         sigma=10.0,
     )
 
@@ -1208,7 +1210,7 @@ if __name__ == '__main__':
                     h_DEM,
                     h,
                     curv_var,
-                    top_variable,
+                    curvature_variable,
                     sigma=1.0)
 
     if sec_der_plot_check:
@@ -1325,18 +1327,20 @@ if __name__ == '__main__':
                 skel_img=skeleton, size=pruning_size)
             skeleton = pruned_skeleton.astype(float)
 
-        ax.imshow(skeleton,
-                  cmap=my_cmap,
-                  extent=extent,
-                  origin='lower',
-                  alpha=skeleton_alpha)
+        if skeleton_alpha > 0:
+
+            ax.imshow(skeleton,
+                      cmap=my_cmap,
+                      extent=extent,
+                      origin='lower',
+                      alpha=skeleton_alpha)
 
         skeleton_vector_check = st.sidebar.checkbox('Skeleton vector')
         skeleton_level = st.sidebar.slider("Skeleton vector simplify level", 0,
                                            20, 5)
         skeleton_smoothing_level = st.sidebar.slider(
             "Skeleton vector smoothing level", 0, 20, 0)
-        skeleton_range = st.sidebar.slider('Select a range of values', 0, 100,
+        skeleton_range = st.sidebar.slider('Skeleton range of values', 0, 100,
                                            (0, 100))
 
     else:
@@ -1363,7 +1367,7 @@ if __name__ == '__main__':
             skeleton = path.contains_points(pixel_coordinates).reshape(
                 X.shape[0], X.shape[1])
 
-    # -------------- FLANK ANALYSIS --------------------
+        # -------------- FLANK ANALYSIS --------------------
 
         st.sidebar.markdown("""---""")
 
@@ -1422,11 +1426,14 @@ if __name__ == '__main__':
 
             scal_dot = img * scal_dot
 
-        ax.imshow(scal_dot,
-                  cmap='gray',
-                  extent=extent,
-                  origin='lower',
-                  alpha=flank_alpha)
+        if flank_alpha > 0.0:
+
+            ax.imshow(scal_dot,
+                      cmap='gray',
+                      extent=extent,
+                      origin='lower',
+                      alpha=flank_alpha)
+
         scal_dot_scaled = 255 * scal_dot
 
         if buffer_check:
@@ -1448,11 +1455,13 @@ if __name__ == '__main__':
         img_buffer = path.contains_points(pixel_coordinates).reshape(
             X.shape[0], X.shape[1])
 
-        ax.imshow(img_buffer,
-                  cmap='gray',
-                  extent=extent,
-                  origin='lower',
-                  alpha=buffer_alpha)
+        if buffer_alpha > 0.0:
+
+            ax.imshow(img_buffer,
+                      cmap='gray',
+                      extent=extent,
+                      origin='lower',
+                      alpha=buffer_alpha)
 
         if flank_check:
 
@@ -1470,7 +1479,7 @@ if __name__ == '__main__':
         st.sidebar.markdown("""---""")
 
         flank_thr_check = st.sidebar.checkbox('Mask save')
-        flank_radio = st.sidebar.radio('Select image:',
+        flank_radio = st.sidebar.radio('Select flank image:',
                                        ['Buffer', 'Flank', 'Intersection'])
 
         mask_opacity = st.sidebar.slider("Mask opacity", 0, 100, 50)
@@ -1531,11 +1540,13 @@ if __name__ == '__main__':
 
             mask = img
 
-        ax.imshow(mask,
-                  cmap='gray',
-                  extent=extent,
-                  origin='lower',
-                  alpha=mask_alpha)
+        if mask_alpha:
+
+            ax.imshow(mask,
+                      cmap='gray',
+                      extent=extent,
+                      origin='lower',
+                      alpha=mask_alpha)
 
         # Save mask on ascii raster file
         header = "ncols     %s\n" % h.shape[1]
@@ -1658,7 +1669,8 @@ if __name__ == '__main__':
         st.sidebar.markdown("""---""")
 
         slope_check = st.sidebar.checkbox('Slope analysis')
-        smooth_level = st.sidebar.slider("Slope smoothing level", 0, 20, 5)
+        slope_smooth_level = st.sidebar.slider("Slope smoothing level", 0, 20,
+                                               5)
         slope_fit_check = st.sidebar.checkbox('Slope fitting')
 
     else:
@@ -1668,8 +1680,8 @@ if __name__ == '__main__':
     if slope_check:
 
         # aspect from topography
-        h_x_filtered = filters.gaussian(h_x, smooth_level)
-        h_y_filtered = filters.gaussian(h_y, smooth_level)
+        h_x_filtered = filters.gaussian(h_x, slope_smooth_level)
+        h_y_filtered = filters.gaussian(h_y, slope_smooth_level)
 
         grad_h_mag = np.sqrt(h_x_filtered**2 + h_y_filtered**2)
         slope = np.arctan(grad_h_mag) * 180.0 / np.pi
@@ -1756,7 +1768,7 @@ if __name__ == '__main__':
 
     # -------------- SYNTHETIC CONE --------------------
 
-    if flank_thr_check:
+    if volume_check:
 
         st.sidebar.markdown("""---""")
 
@@ -1785,9 +1797,8 @@ if __name__ == '__main__':
 
             h_top = h
 
-        buffer_distance = 1
         # compute buffer area (points within a fixed distance from medial axis)
-        path = offset_path(skeleton_vector, buffer_distance, False)
+        path = offset_path(skeleton_vector, 1.0, False)
 
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
@@ -1868,15 +1879,21 @@ if __name__ == '__main__':
         st.sidebar.write('Synthetic cone flank volume =', synth_vol1, 'm3')
 
         df = pd.DataFrame({
-            'ascii_file': [ascii_file],
-            'Top variable': [top_variable],
-            'Threshold level': [thresh_level],
-            'Pruning size': [pruning_size],
-            'Skeleton simplify level': [skeleton_level],
-            'correction_factor': [correction_factor],
+            'scii_file': [ascii_file],
+            'smoothing': [smoothing_level],
+            'curvature variable': [curvature_variable],
+            'threshold level': [thresh_level],
+            'skeleton pruning size': [pruning_size],
+            'skeleton vector simplify level': [skeleton_level],
+            'skeleton vector smoothing level': [skeleton_smoothing_level],
+            'skeleton range of values': [skeleton_range],
+            'scalar dot': [correction_factor],
             'buffer_distance': [buffer_distance],
-            'flank_radio': [flank_radio],
-            'Slope angle': [cr_slope]
+            'flank image': [flank_radio],
+            'minimum base distance': [min_base_distance],
+            'slope smoothing level': [slope_smooth_level],
+            'linear fit top check': [top_linear_check],
+            'slope angle': [cr_slope]
         })
 
         filename = ascii_file.replace('.asc', '.csv')
