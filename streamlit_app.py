@@ -39,9 +39,9 @@ import scipy.optimize
 
 
 @st.cache
-def plane_fit(polyline,X,Y,h):
+def plane_fit(polyline, X, Y, h):
     """Fit a 2D shapely LineString with a planar surface
-    
+
     Parameters
     ----------
     polyline : shapely LineString
@@ -53,20 +53,20 @@ def plane_fit(polyline,X,Y,h):
         numpy array of topography UTM y-coordiantes
     h : float numpy array
         numpy array of topography elevation
-    
+
     Returns
     -------
     C : float array
         coefficients of linear fit C[0]*x+C[1]*y+C[2]
     h_plane : float numpy array
         numpy array of linear fit elevation
-    
+
     """
 
     len_list = np.linspace(0, polyline.length, num=20, endpoint=True)
-    
+
     # list of 20 points sampled uniformly (based on length) from
-    # the polyline defining the cone top 
+    # the polyline defining the cone top
     coords_uniform = []
     for Length in len_list:
 
@@ -78,7 +78,7 @@ def plane_fit(polyline,X,Y,h):
 
     # x and y coordinates of the points
     x_uni, y_uni = line_uni.coords.xy
-    
+
     x_poly = []
     y_poly = []
     h_poly = []
@@ -91,7 +91,7 @@ def plane_fit(polyline,X,Y,h):
 
             # bi-linear interpolation of elevation h from X,Y grid points
             # to (x,y)
-            
+
             ix = np.minimum(int(np.floor((x - x_min) / dx)), X.shape[1] - 2)
             iy = np.minimum(int(np.floor((y - y_min) / dx)), Y.shape[0] - 2)
 
@@ -112,12 +112,11 @@ def plane_fit(polyline,X,Y,h):
 
     ax.plot(x_poly, y_poly, '.r')
 
-
-    # the linear fit algorithm works better for values of the 
-    # coordinates close to zero. for this reason we translate 
+    # the linear fit algorithm works better for values of the
+    # coordinates close to zero. for this reason we translate
     # the coordinates by using the mean coordinates of the
     # points of cone top: x_poly_avg,y_poly_avg
-    
+
     x_poly_avg = np.mean(x_poly)
     y_poly_avg = np.mean(y_poly)
     print('x_base_avg', x_poly_avg)
@@ -146,23 +145,23 @@ def chaikins_corner_cutting(coords, refinements=5):
     by iteratively replacing every point by two new points: 
     one 1/4 of the way to the next point and one 1/4 of 
     the way to the previous point.
-    
+
     Source: https://stackoverflow.com/questions/47068504/where-to-find-python-implementation-of-chaikins-corner-cutting-algorithm
-    
-    
+
+
     Parameters
     ----------
     coords : float list of lists
         list of points, defined by the x and y coordinated
     refinement : int
         number of refinements for the Chaikin's algorithm
-    
+
     Returns
     -------
     coords : numnpy float array
         coordinates of the points defining the smoother
         polyline
-    
+
     """
 
     coords = np.array(coords)
@@ -185,7 +184,7 @@ def monoExp(x, m, t, b):
     and intersect x=0 at y=m+b. The values of t controls
     how fast the exponential approaches the horizontal
     asymptot.
-    
+
     Parameters
     ----------
     x : float 
@@ -201,11 +200,11 @@ def monoExp(x, m, t, b):
     -------
     y : float
         value of the exponential function at x
-    
+
     """
-    
+
     y = m * np.exp(-t * x) + b
-    
+
     return y
 
 
@@ -216,7 +215,7 @@ def surfature(X, Y, Z):
     An illustrated introduction to general geomorphometry
     Progress in Physical Geography
     2017, Vol. 41(6) 723–752
-    
+
     Parameters
     ----------
     X : float numpy array
@@ -232,11 +231,11 @@ def surfature(X, Y, Z):
         maximum curvature
     Pmin : float numpy array
         minimum curvature
-    
+
     """
     cellsize = np.abs(X[1, 2] - X[1, 1])
 
-    #first order local derivatives 
+    # first order local derivatives
     gx, gy = np.gradient(Z, cellsize, cellsize)
 
     # second order local derivatives
@@ -250,7 +249,7 @@ def surfature(X, Y, Z):
     gyx = gxy
 
     # Eq. 2 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
-    # Computer Vision    
+    # Computer Vision
     p = gx
     q = gy
     r = gxx
@@ -259,27 +258,27 @@ def surfature(X, Y, Z):
 
     # Eq. 21 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
     # Computer Vision
-    H = - ( (1.0+q**2)*r - 2.0*p*q*s + ( 1.0 + p**2) * t ) / ( 2.0 * np.sqrt( (1.0+p**2+q**2)**3 ) )
+    H = - ((1.0+q**2)*r - 2.0*p*q*s + (1.0 + p**2) * t) / \
+        (2.0 * np.sqrt((1.0+p**2+q**2)**3))
 
     # Eq. 22 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
     # Computer Vision
-    K = ( r*t - s**2 ) / ( 1.0 + p**2 + q**2 )**2
+    K = (r * t - s**2) / (1.0 + p**2 + q**2)**2
 
     # Eq. 23 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
     # Computer Vision
-    M = np.sqrt( H**2 - K )
+    M = np.sqrt(H**2 - K)
 
     # Principal Curvatures
-    
+
     # Eq. 20 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
     # Computer Vision
     Pmax = H + M
-    
+
     # Eq. 19 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
     # Computer Vision
     Pmin = H - M
 
-    
     # n = 5
     # m = 1
     # Pmin = np.sign(Pmin)*np.log(1.0+10**(n*m)*np.abs(Pmin))
@@ -292,7 +291,7 @@ def surfature(X, Y, Z):
 def read_asc(ascii_file):
     """Read DEM in .asc format 
     Read a DEM in ESRII ascci format and UTM coordinated
-    
+
     Parameters
     ----------
     ascii_file : string
@@ -317,7 +316,7 @@ def read_asc(ascii_file):
         minimum y of grid points        
     delta_y : float
         size of grid cells in y-direction
-    
+
     """
     import numpy as np
     from linecache import getline
@@ -376,7 +375,7 @@ def reverse_geom(geom):
 def offset_path(skeleton_vector, offset, plot_flag):
     """Return a matplotlib at a distance from the cone
     top and in the direction of the flank
-    
+
     Parameters
     ----------
     skeleton_vector : shapely LineString
@@ -386,14 +385,14 @@ def offset_path(skeleton_vector, offset, plot_flag):
         offset distance
     plot_flag : logical
         logical to plot the offset path
-    
+
     Returns
     -------
     path : matplotlib Path
         offset path on the flank of the cone 
-    
+
     """
-    
+
     x, y = skeleton_vector.coords.xy
 
     # offset paths on left and right of the cone top
@@ -1634,7 +1633,7 @@ if __name__ == '__main__':
 
         print('line_cnt length', line_cnt.length)
 
-        C_base, h_base = plane_fit(line_cnt,X,Y,h)
+        C_base, h_base = plane_fit(line_cnt, X, Y, h)
 
         save_base_var_check = st.sidebar.button('NetCDF for base save')
 
@@ -1780,7 +1779,7 @@ if __name__ == '__main__':
 
         if top_linear_check:
 
-            C_top, h_top = plane_fit(skeleton_vector,X,Y,h)
+            C_top, h_top = plane_fit(skeleton_vector, X, Y, h)
 
         else:
 
