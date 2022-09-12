@@ -249,26 +249,34 @@ def surfature(X, Y, Z):
     gxy = 0.5 * (gxy1 + gxy2)
     gyx = gxy
 
-    # notation from Florinsky 2017
+    # Eq. 2 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision    
     p = gx
     q = gy
-
     r = gxx
     t = gyy
     s = gxy
 
-    # Mean curvature
-    H = - ((1.0+q**2)*r - 2.0*p*q*s + (1.0 + p**2) * t) / \
-        (2.0 * np.sqrt((1.0+p**2+q**2)**3))
-        
-    # Gaussian curvature
-    K = (r * t - s**2) / (1.0 + p**2 + q**2)**2
+    # Eq. 21 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision
+    H = - ( (1.0+q**2)*r - 2.0*p*q*s + ( 1.0 + p**2) * t ) / ( 2.0 * np.sqrt( (1.0+p**2+q**2)**3 ) )
 
-    # Unsphericity curvature
-    M = np.sqrt(H**2 - K)
+    # Eq. 22 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision
+    K = ( r*t - s**2 ) / ( 1.0 + p**2 + q**2 )**2
+
+    # Eq. 23 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision
+    M = np.sqrt( H**2 - K )
 
     # Principal Curvatures
+    
+    # Eq. 20 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision
     Pmax = H + M
+    
+    # Eq. 19 from Florinsky 2017, "An illustrated introduction to general geomorphometry"
+    # Computer Vision
     Pmin = H - M
 
     
