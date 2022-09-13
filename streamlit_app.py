@@ -13,6 +13,7 @@ from skimage.morphology import skeletonize
 
 from plantcv import plantcv as pcv
 
+from matplotlib.patches import Ellipse
 from matplotlib.colors import LightSource
 from scipy import interpolate
 import scipy.linalg
@@ -23,7 +24,7 @@ import copy
 from scipy import ndimage
 
 import shapefile
-from shapely.geometry import Point, Polygon, LineString, MultiPoint, MultiLineString
+from shapely.geometry import Point, Polygon, LineString, MultiPoint, MultiLineString, LinearRing
 from shapely.ops import linemerge
 from shapely.affinity import translate
 
@@ -37,6 +38,53 @@ import netCDF4
 
 import scipy.optimize
 
+
+@st.cache
+def fitEllipse(x, y, method):
+
+    # fit a polyline with an ellipse
+    # INPUT:
+    # - x x-coordinates of the points of the polyline
+    # - y y-coordinates of the points of the polyline
+    # OUTPUT:
+    # - cx,cy coordinates of the ellipse center
+    # - a,b semiaxis of the ellipse
+    # - angle angle between the major semiaxes and the x-axis
+
+    x = x[:, None]
+    y = y[:, None]
+
+    D = np.hstack([x * x, x * y, y * y, x, y, np.ones(x.shape)])
+    S = np.dot(D.T, D)
+    C = np.zeros([6, 6])
+    C[0, 2] = C[2, 0] = 2
+    C[1, 1] = -1
+    E, V = np.linalg.eig(np.dot(np.linalg.inv(S), C))
+
+    if method == 1:
+        n = np.argmax(np.abs(E))
+    else:
+        n = np.argmax(E)
+    a = V[:, n]
+
+    # -------------------Fit ellipse-------------------
+    b, c, d, f, g, a = a[1] / 2., a[2], a[3] / 2., a[4] / 2., a[5], a[0]
+    num = b * b - a * c
+    cx = (c * d - b * f) / num
+    cy = (a * f - b * d) / num
+
+    angle = 0.5 * np.arctan(2 * b / (a - c)) * 180 / np.pi
+    up = 2 * (a * f * f + c * d * d + g * b * b - 2 * b * d * f - a * c * g)
+    down1 = (b * b - a * c) * ((c - a) * np.sqrt(1 + 4 * b * b / ((a - c) *
+                                                                  (a - c))) -
+                               (c + a))
+    down2 = (b * b - a * c) * ((a - c) * np.sqrt(1 + 4 * b * b / ((a - c) *
+                                                                  (a - c))) -
+                               (c + a))
+    a = np.sqrt(abs(up / down1))
+    b = np.sqrt(abs(up / down2))
+
+    return cx, cy, a, b, angle
 
 @st.cache
 def plane_fit(polyline, X, Y, h):
@@ -393,13 +441,15 @@ def offset_path(skeleton_vector, offset, plot_flag):
 
     """
 
-    x, y = skeleton_vector.coords.xy
-
     # offset paths on left and right of the cone top
     # we do not know a priori which one we is on the flank side
     offset_l = skeleton_vector.parallel_offset(offset, 'left', join_style=1)
     offset_r = skeleton_vector.parallel_offset(offset, 'right', join_style=1)
+   
+    print('offset_l',offset_l)
+    print('offset_r',offset_r)
 
+    
     if offset_l.geom_type == 'MultiLineString':
 
         offset = offset_r
@@ -418,20 +468,26 @@ def offset_path(skeleton_vector, offset, plot_flag):
 
             offset = offset_r
 
-    xA0 = x[0]
-    yA0 = y[0]
+    print('skeleton_vector',skeleton_vector.geom_type)
+    print('offset',offset.geom_type)
+    print(offset)
 
-    xA1 = x[-1]
-    yA1 = y[-1]
+    xs, ys = skeleton_vector.coords.xy
 
-    x, y = offset.coords.xy
+    xA0 = xs[0]
+    yA0 = ys[0]
 
-    xB0 = x[0]
-    yB0 = y[0]
+    xA1 = xs[-1]
+    yA1 = ys[-1]
 
-    xB1 = x[-1]
-    yB1 = y[-1]
+    xo, yo = offset.coords.xy
 
+    xB0 = xo[0]
+    yB0 = yo[0]
+
+    xB1 = xo[-1]
+    yB1 = yo[-1]
+    
     dist_00 = np.sqrt((xA0 - xB0)**2 + (yA0 - yB0)**2)
     dist_01 = np.sqrt((xA0 - xB1)**2 + (yA0 - yB1)**2)
     dist_10 = np.sqrt((xA1 - xB0)**2 + (yA1 - yB0)**2)
@@ -440,24 +496,28 @@ def offset_path(skeleton_vector, offset, plot_flag):
     if (dist_00 + dist_11 < dist_10 + dist_01):
 
         offset = reverse_geom(offset)
+        xo, yo = offset.coords.xy
 
     if plot_flag:
         ax.plot(*offset.xy)
 
-    path = []
+    if skeleton_vector.geom_type == 'LinearRing':
 
-    p = Polygon([*list(skeleton_vector.coords), *list(offset.coords)])
+        xo.append(xo[0])    
+        yo.append(yo[0])   
+
+    p = Polygon([(x, y) for x, y in zip(xs+xo, ys+yo)])
 
     x, y = p.exterior.coords.xy
     xy_poly = [(x, y) for x, y in zip(x, y)]
     path = Path(xy_poly)
-
+ 
     return path
 
 
 @st.cache
 def cut(line):
-    # Cuts a line in two at a distance from its starting point
+    # Cuts a closed line in two parts
 
     coords = list(line.coords)
     linePoly = Polygon(coords)
@@ -470,7 +530,7 @@ def cut(line):
 
     if (equivalent_area_perimeter / perimeter > 0.3):
 
-        return line, True
+        return LinearRing(coords), True
 
     nph = 200
 
@@ -504,17 +564,20 @@ def cut(line):
 
 
 @st.cache
-def raster_to_vector2(X, Y, skeleton, fract1, fract2):
+def raster_to_vector(X, Y, skeleton):
 
     from shapely.geometry import shape, JOIN_STYLE
 
+    # create contour lines from the skeleton image
+    # the contour should be a close line
     cn = ax.contour(X, Y, skeleton, 1, alpha=0)
 
     # Set a distance threshold to check if the contours are closed curves
     eps = 1e-5
 
     ln_max = 0.0
-
+    
+    # loop over the contours to take the longest close one
     for cc in cn.collections:
         paths = []
         # for each separate section of the contour line
@@ -532,6 +595,11 @@ def raster_to_vector2(X, Y, skeleton, fract1, fract2):
             # Check if the contour is closed.
             closed = (abs(xv[0] - xv[-1]) < eps) and (abs(yv[0] - yv[-1]) <
                                                       eps)
+                                                      
+            if closed:
+            
+                xv[-1] = xv[0]
+                yv[-1] = yv[0]                                          
 
             points = [(x, y) for x, y in zip(xv, yv)]
 
@@ -544,10 +612,20 @@ def raster_to_vector2(X, Y, skeleton, fract1, fract2):
 
                 print('number of points', len(xv))
 
-    l1_1, closed = cut(ln)
+    # if the skeleton is not closed cut the contour in two 
+    # parts and take one of the two
+    skeleton_vector, closed = cut(ln)
 
-    skeleton_vector = l1_1.simplify(skeleton_level, preserve_topology=True)
+    return skeleton_vector, closed
 
+@st.cache
+def improve_vector(skeleton_vector,closed,skeleton_level,skeleton_smoothing_level):
+
+    if skeleton_level > 0:
+    
+        skeleton_vector = skeleton_vector.simplify(skeleton_level, preserve_topology=True)
+                
+                
     if skeleton_smoothing_level > 0:
 
         x, y = skeleton_vector.coords.xy
@@ -557,33 +635,41 @@ def raster_to_vector2(X, Y, skeleton, fract1, fract2):
         coords = chaikins_corner_cutting(coords,
                                          refinements=skeleton_smoothing_level)
 
+        if closed:
+        
+            skeleton_vector = LinearRing(coords)
+            
+        else:
+            
+            skeleton_vector = LineString(coords)
+
+
+    if ( skeleton_range[0] > 0 ) or ( skeleton_range[1] < 100 ): 
+
+        x, y = skeleton_vector.coords.xy
+
+        line = []
+
+        for i in range(len(x) - 1):
+
+            coords = np.array([[x, y] for x, y in zip(x[i:], y[i:])])
+
+            partial_axis = LineString(coords)
+
+            line.append(partial_axis.length)
+
+        line.append(0.0)
+        line = np.array(line)
+        line = line / max(line) * 100.0
+        idx1 = (np.abs(line - skeleton_range[0])).argmin()
+        idx0 = (np.abs(line - skeleton_range[1])).argmin()
+
+        print(idx0, idx1)
+
+        coords = np.array([[x, y] for x, y in zip(x[idx0:idx1], y[idx0:idx1])])
+
         skeleton_vector = LineString(coords)
-
-        # skeleton_range
-
-    x, y = skeleton_vector.coords.xy
-
-    line = []
-
-    for i in range(len(x) - 1):
-
-        coords = np.array([[x, y] for x, y in zip(x[i:], y[i:])])
-
-        partial_axis = LineString(coords)
-
-        line.append(partial_axis.length)
-
-    line.append(0.0)
-    line = np.array(line)
-    line = line / max(line) * 100.0
-    idx1 = (np.abs(line - skeleton_range[0])).argmin()
-    idx0 = (np.abs(line - skeleton_range[1])).argmin()
-
-    print(idx0, idx1)
-
-    coords = np.array([[x, y] for x, y in zip(x[idx0:idx1], y[idx0:idx1])])
-
-    skeleton_vector = LineString(coords)
+        closed = False
 
     return skeleton_vector, closed
 
@@ -620,6 +706,9 @@ def save_netcdf(ascii_file,
     H_elems = hessian_matrix(slope, sigma=10.0, order='xy')
     # eigenvalues of hessian matrix
     Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
+    
+    Pmax2, Pmin2 = surfature(X, Y, slope)
+    
 
     Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
         (np.nanmax(Pmax2) - np.nanmin(Pmax2))
@@ -835,6 +924,9 @@ def detect_ridges(X, Y, slope, h, curv_var, curvature_variable, sigma=1.0):
     # eigenvalues of hessian matrix
     Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
 
+    Pmax2, Pmin2 = surfature(X, Y, slope)
+
+
     Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
         (np.nanmax(Pmax2) - np.nanmin(Pmax2))
     Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / \
@@ -1020,7 +1112,7 @@ def find_slow(binary, h_smooth, scal_dot, val_thr):
             break
 
     toc = time.perf_counter()
-    print(f"Loop in {toc - tic:0.4f} seconds")
+    print("Loop in {toc - tic:0.4f} seconds")
 
     mask = np.array(binaryL * 255, dtype=np.uint8)
     img = cv2.threshold(mask, 122, 255, cv2.THRESH_BINARY)[1]
@@ -1193,9 +1285,9 @@ if __name__ == '__main__':
         sigma=10.0,
     )
 
-    sec_der_plot_check = st.sidebar.checkbox('Slope Second Derivative Plot')
+    det_var_plot_check = st.sidebar.checkbox('Detection variable Plot')
 
-    a_opacity = st.sidebar.slider("Slope Second Derivative opacity", 0, 100,
+    a_opacity = st.sidebar.slider("Detection variable opacity", 0, 100,
                                   50)
     a_alpha = a_opacity / 100.0
 
@@ -1213,7 +1305,7 @@ if __name__ == '__main__':
                     curvature_variable,
                     sigma=1.0)
 
-    if sec_der_plot_check:
+    if det_var_plot_check:
 
         ax.imshow(norm_image,
                   cmap='gray',
@@ -1317,6 +1409,7 @@ if __name__ == '__main__':
             # ax.imshow(img_erosion, cmap=my_cmap, extent=extent,origin='lower', alpha=skeleton_alpha)
 
             skeleton = 255 * img_erosion
+            pruning_size = 0
 
         else:
 
@@ -1335,6 +1428,11 @@ if __name__ == '__main__':
                       origin='lower',
                       alpha=skeleton_alpha)
 
+        skeleton_vector, closed = raster_to_vector(X, Y, skeleton)
+
+        skeleton_ellipse_check = st.sidebar.checkbox('Skeleton ellipse')
+        
+        
         skeleton_vector_check = st.sidebar.checkbox('Skeleton vector')
         skeleton_level = st.sidebar.slider("Skeleton vector simplify level", 0,
                                            20, 5)
@@ -1345,15 +1443,46 @@ if __name__ == '__main__':
 
     else:
 
+        skeleton_ellipse_check = False
         skeleton_vector_check = False
+
+    if skeleton_ellipse_check:
+    
+        x, y = skeleton_vector.coords.xy
+    
+        # Fit the contour with an ellipse
+        cx, cy, a, b, angle = fitEllipse(x - X[0, 0],
+                                         y - Y[0, 0], 2)
+                                                     
+        # Append the ellipse center coordinates to the lists
+        # cx_ellipse.append(float(cx.real))
+        # cy_ellipse.append(float(cy.real))
+
+        # Create an ellipse object from the fitting parameters 
+        ell = Ellipse((cx.real, cy.real), a.real * 2., b.real * 2.,
+                      angle.real)
+                                  
+        # Get the coordinates of a set of ellipse points
+        ell_coord = ell.get_verts()
+        x_ellipse = ell_coord[:,0] + X[0, 0]
+        y_ellipse = ell_coord[:,1] + Y[0, 0]
+                    
+        # Plot the points in the absolute coordinate system
+        ax.plot(x_ellipse,y_ellipse, 'k-')
+                         
+        # Plot the center of the ellipse in the absolute coordinate system
+        ax.plot(cx.real + X[0, 0], cy.real + Y[0, 0], 'kx')
 
     if skeleton_vector_check:
 
         # we compute a vector representation of the skeleton
         # skeleton_vector is a polyline defined by points
 
-        skeleton_vector, closed = raster_to_vector2(X, Y, skeleton, 0.5, 0.6)
+        
+        
+        skeleton_vector, closed = improve_vector(skeleton_vector,closed,skeleton_level,skeleton_smoothing_level)
 
+        print('Skeleton vector',skeleton_vector.geom_type)
         print('Closed', closed)
         ax.plot(*skeleton_vector.xy, 'g')
 
@@ -1448,7 +1577,7 @@ if __name__ == '__main__':
 
         # compute buffer area (points within a fixed distance from medial axis)
         path = offset_path(skeleton_vector, buffer_distance, False)
-
+        
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
         # find points within path
@@ -1773,7 +1902,13 @@ if __name__ == '__main__':
         st.sidebar.markdown("""---""")
 
         synth_check = st.sidebar.checkbox('Synthetic cone')
+        if skeleton_ellipse_check:
+        
+            synth_ellipse_check = st.sidebar.checkbox('Elliptic synthetic cone top')
+
         top_linear_check = st.sidebar.checkbox('Linear fit of cone top')
+        
+            
         synth_opacity = st.sidebar.slider("Synthetic cone opacity", 0, 100, 50)
         synth_alpha = synth_opacity / 100.0
 
@@ -1788,6 +1923,8 @@ if __name__ == '__main__':
         synth_check = False
 
     if synth_check:
+    
+        
 
         if top_linear_check:
 
@@ -1797,8 +1934,18 @@ if __name__ == '__main__':
 
             h_top = h
 
-        # compute buffer area (points within a fixed distance from medial axis)
-        path = offset_path(skeleton_vector, 1.0, False)
+
+
+        # compute small buffer area (points within distance 1.0 from top)        
+        if synth_ellipse_check:
+        
+            coords = np.array([[x, y] for x, y in zip(x_ellipse, y_ellipse)])
+            path = offset_path(LinearRing(coords), 1.0, False)
+
+        else:
+            
+            path = offset_path(skeleton_vector, 1.0, False)
+        
 
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
