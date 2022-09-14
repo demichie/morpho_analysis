@@ -86,6 +86,7 @@ def fitEllipse(x, y, method):
 
     return cx, cy, a, b, angle
 
+
 @st.cache
 def plane_fit(polyline, X, Y, h):
     """Fit a 2D shapely LineString with a planar surface
@@ -93,7 +94,7 @@ def plane_fit(polyline, X, Y, h):
     Parameters
     ----------
     polyline : shapely LineString
-        2D LineString defining the (x,y) coordinates of 
+        2D LineString defining the (x,y) coordinates of
         the polyline points
     X : float numpy array
         numpy array of topography UTM x-coordiantes
@@ -189,9 +190,9 @@ def plane_fit(polyline, X, Y, h):
 
 @st.cache
 def chaikins_corner_cutting(coords, refinements=5):
-    """Chaikin's corner cutting algorithm. Smooths a polyline 
-    by iteratively replacing every point by two new points: 
-    one 1/4 of the way to the next point and one 1/4 of 
+    """Chaikin's corner cutting algorithm. Smooths a polyline
+    by iteratively replacing every point by two new points:
+    one 1/4 of the way to the next point and one 1/4 of
     the way to the previous point.
 
     Source: https://stackoverflow.com/questions/47068504/where-to-find-python-implementation-of-chaikins-corner-cutting-algorithm
@@ -227,7 +228,7 @@ def chaikins_corner_cutting(coords, refinements=5):
 
 
 def monoExp(x, m, t, b):
-    """Exponential function used for the fitting. The 
+    """Exponential function used for the fitting. The
     fitting function has an horizontal asymptot y=b
     and intersect x=0 at y=m+b. The values of t controls
     how fast the exponential approaches the horizontal
@@ -235,14 +236,14 @@ def monoExp(x, m, t, b):
 
     Parameters
     ----------
-    x : float 
+    x : float
         x coordinate
     t : float
-        exponential function parameter    
+        exponential function parameter
     m : float
-        exponential function parameter    
+        exponential function parameter
     b : float
-        exponential function parameter    
+        exponential function parameter
 
     Returns
     -------
@@ -271,7 +272,7 @@ def surfature(X, Y, Z):
     Y : float numpy array
         numpy array of topography UTM y-coordiantes
     z : float numpy array
-        numpy array of topography elevation  
+        numpy array of topography elevation
 
     Returns
     -------
@@ -337,7 +338,7 @@ def surfature(X, Y, Z):
 
 @st.cache
 def read_asc(ascii_file):
-    """Read DEM in .asc format 
+    """Read DEM in .asc format
     Read a DEM in ESRII ascci format and UTM coordinated
 
     Parameters
@@ -351,17 +352,17 @@ def read_asc(ascii_file):
     Y : float numpy array
         array of grid x UTM coordinates
     h : float numpy array
-        array of topography elevation    
+        array of topography elevation
     x_min : float
-        minimum x of grid points    
+        minimum x of grid points
     x_max : float
-        maximum x of grid points   
+        maximum x of grid points
     delta_x : float
-        size of grid cells in x-direction    
+        size of grid cells in x-direction
     y_min : float
-        minimum y of grid points        
+        minimum y of grid points
     y_max : float
-        minimum y of grid points        
+        minimum y of grid points
     delta_y : float
         size of grid cells in y-direction
 
@@ -411,12 +412,29 @@ def read_asc(ascii_file):
 
 @st.cache
 def reverse_geom(geom):
+    """Reverse the order of the points of a geometric object
+
+    Parameters
+    ----------
+    geom : shapely LineString
+        2D LineString defining the (x,y) coordinates of
+        the gemetric object
+
+    Returns
+    -------
+    geom_rev : shapely LineString
+        2D LineString defining the (x,y) coordinates of
+        the reversed gemetric object
+
+    """
     def _reverse(x, y, z=None):
         if z:
             return x[::-1], y[::-1], z[::-1]
         return x[::-1], y[::-1]
 
-    return ops.transform(_reverse, geom)
+    geom_rev = ops.transform(_reverse, geom)
+
+    return geom_rev
 
 
 @st.cache
@@ -427,9 +445,9 @@ def offset_path(skeleton_vector, offset, plot_flag):
     Parameters
     ----------
     skeleton_vector : shapely LineString
-        2D LineString defining the (x,y) coordinates of 
+        2D LineString defining the (x,y) coordinates of
         the cone top
-    offset: float 
+    offset: float
         offset distance
     plot_flag : logical
         logical to plot the offset path
@@ -437,7 +455,7 @@ def offset_path(skeleton_vector, offset, plot_flag):
     Returns
     -------
     path : matplotlib Path
-        offset path on the flank of the cone 
+        offset path on the flank of the cone
 
     """
 
@@ -445,11 +463,10 @@ def offset_path(skeleton_vector, offset, plot_flag):
     # we do not know a priori which one we is on the flank side
     offset_l = skeleton_vector.parallel_offset(offset, 'left', join_style=1)
     offset_r = skeleton_vector.parallel_offset(offset, 'right', join_style=1)
-   
-    print('offset_l',offset_l)
-    print('offset_r',offset_r)
 
-    
+    print('offset_l', offset_l)
+    print('offset_r', offset_r)
+
     if offset_l.geom_type == 'MultiLineString':
 
         offset = offset_r
@@ -468,8 +485,8 @@ def offset_path(skeleton_vector, offset, plot_flag):
 
             offset = offset_r
 
-    print('skeleton_vector',skeleton_vector.geom_type)
-    print('offset',offset.geom_type)
+    print('skeleton_vector', skeleton_vector.geom_type)
+    print('offset', offset.geom_type)
     print(offset)
 
     xs, ys = skeleton_vector.coords.xy
@@ -487,7 +504,7 @@ def offset_path(skeleton_vector, offset, plot_flag):
 
     xB1 = xo[-1]
     yB1 = yo[-1]
-    
+
     dist_00 = np.sqrt((xA0 - xB0)**2 + (yA0 - yB0)**2)
     dist_01 = np.sqrt((xA0 - xB1)**2 + (yA0 - yB1)**2)
     dist_10 = np.sqrt((xA1 - xB0)**2 + (yA1 - yB0)**2)
@@ -503,21 +520,41 @@ def offset_path(skeleton_vector, offset, plot_flag):
 
     if skeleton_vector.geom_type == 'LinearRing':
 
-        xo.append(xo[0])    
-        yo.append(yo[0])   
+        xo.append(xo[0])
+        yo.append(yo[0])
 
-    p = Polygon([(x, y) for x, y in zip(xs+xo, ys+yo)])
+    p = Polygon([(x, y) for x, y in zip(xs + xo, ys + yo)])
 
     x, y = p.exterior.coords.xy
     xy_poly = [(x, y) for x, y in zip(x, y)]
     path = Path(xy_poly)
- 
+
     return path
 
 
 @st.cache
 def cut(line):
-    # Cuts a closed line in two parts
+    """Cut a closed line in two parts if the area of the
+    enclosed region is small. This happens for a
+    line representing the outline of a non-closed cone
+    top. In case the line is the outline of closed cone
+    top, there is no cut.
+
+     Parameters
+     ----------
+     line : shapely LineString
+         2D LineString defining the (x,y)
+         coordinates of outline of cone top
+
+     Returns
+     -------
+     path : shapely LineString or LinearRing
+         2D LineString/LinearRing defining the (x,y)
+         coordinates of cone top
+     closed : logical
+         logical variable for closed or open path
+
+     """
 
     coords = list(line.coords)
     linePoly = Polygon(coords)
@@ -565,6 +602,26 @@ def cut(line):
 
 @st.cache
 def raster_to_vector(X, Y, skeleton):
+    """Convert skeleton raster to vector
+
+    Parameters
+    ----------
+    X : float numpy array
+        2D array of grid y UTM coordinates
+    Y : float numpy array
+        2D array of grid x UTM coordinates
+    skeleton : float numpy array
+        2D array defining the skeleton (=1)     
+
+    Returns
+    -------
+    path : shapely LineString or LinearRing
+        2D LineString/LinearRing defining the (x,y) 
+        coordinates of cone top
+    closed : logical
+        logical variable for closed or open path    
+
+    """
 
     from shapely.geometry import shape, JOIN_STYLE
 
@@ -576,7 +633,7 @@ def raster_to_vector(X, Y, skeleton):
     eps = 1e-5
 
     ln_max = 0.0
-    
+
     # loop over the contours to take the longest close one
     for cc in cn.collections:
         paths = []
@@ -595,11 +652,11 @@ def raster_to_vector(X, Y, skeleton):
             # Check if the contour is closed.
             closed = (abs(xv[0] - xv[-1]) < eps) and (abs(yv[0] - yv[-1]) <
                                                       eps)
-                                                      
+
             if closed:
-            
+
                 xv[-1] = xv[0]
-                yv[-1] = yv[0]                                          
+                yv[-1] = yv[0]
 
             points = [(x, y) for x, y in zip(xv, yv)]
 
@@ -612,20 +669,22 @@ def raster_to_vector(X, Y, skeleton):
 
                 print('number of points', len(xv))
 
-    # if the skeleton is not closed cut the contour in two 
+    # if the skeleton is not closed cut the contour in two
     # parts and take one of the two
     skeleton_vector, closed = cut(ln)
 
     return skeleton_vector, closed
 
+
 @st.cache
-def improve_vector(skeleton_vector,closed,skeleton_level,skeleton_smoothing_level):
+def improve_vector(skeleton_vector, closed, skeleton_level,
+                   skeleton_smoothing_level, skeleton_range):
 
     if skeleton_level > 0:
-    
-        skeleton_vector = skeleton_vector.simplify(skeleton_level, preserve_topology=True)
-                
-                
+
+        skeleton_vector = skeleton_vector.simplify(skeleton_level,
+                                                   preserve_topology=True)
+
     if skeleton_smoothing_level > 0:
 
         x, y = skeleton_vector.coords.xy
@@ -636,15 +695,14 @@ def improve_vector(skeleton_vector,closed,skeleton_level,skeleton_smoothing_leve
                                          refinements=skeleton_smoothing_level)
 
         if closed:
-        
+
             skeleton_vector = LinearRing(coords)
-            
+
         else:
-            
+
             skeleton_vector = LineString(coords)
 
-
-    if ( skeleton_range[0] > 0 ) or ( skeleton_range[1] < 100 ): 
+    if (skeleton_range[0] > 0) or (skeleton_range[1] < 100):
 
         x, y = skeleton_vector.coords.xy
 
@@ -686,15 +744,8 @@ def file_selector(folder_path='.', ext='asc'):
 
 
 @st.cache
-def save_netcdf(ascii_file,
-                X,
-                Y,
-                slope,
-                h_DEM,
-                h,
-                curv_var,
-                curvature_variable,
-                sigma=1.0):
+def save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var,
+                curvature_variable):
 
     Pmax1, Pmin1 = surfature(X, Y, h)
 
@@ -703,12 +754,7 @@ def save_netcdf(ascii_file,
     Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / \
         (np.nanmax(Pmin1) - np.nanmin(Pmin1))
 
-    H_elems = hessian_matrix(slope, sigma=10.0, order='xy')
-    # eigenvalues of hessian matrix
-    Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
-    
     Pmax2, Pmin2 = surfature(X, Y, slope)
-    
 
     Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
         (np.nanmax(Pmax2) - np.nanmin(Pmax2))
@@ -911,39 +957,27 @@ def savebase_netcdf(X, Y, h_base):
 
 
 @st.cache
-def detect_ridges(X, Y, slope, h, curv_var, curvature_variable, sigma=1.0):
+def detect_ridges(X, Y, slope, h, curv_var, curvature_variable):
 
-    Pmax1, Pmin1 = surfature(X, Y, h)
-
-    Pmax1_norm = (Pmax1 - np.nanmin(Pmax1)) / \
-        (np.nanmax(Pmax1) - np.nanmin(Pmax1))
-    Pmin1_norm = - (Pmin1 - np.nanmin(Pmin1)) / \
-        (np.nanmax(Pmin1) - np.nanmin(Pmin1))
-
-    H_elems = hessian_matrix(slope, sigma=10.0, order='xy')
-    # eigenvalues of hessian matrix
-    Pmax2, Pmin2 = hessian_matrix_eigvals(H_elems)
-
-    Pmax2, Pmin2 = surfature(X, Y, slope)
-
-
-    Pmax2_norm = (Pmax2 - np.nanmin(Pmax2)) / \
-        (np.nanmax(Pmax2) - np.nanmin(Pmax2))
-    Pmin2_norm = - (Pmin2 - np.nanmin(Pmin2)) / \
-        (np.nanmax(Pmin2) - np.nanmin(Pmin2))
-
+    # compute max and min curvature of curvature variable
     if curv_var == 'elevation':
 
-        Pmax_norm = Pmax1_norm
-        Pmin_norm = Pmin1_norm
+        Pmax, Pmin = surfature(X, Y, h)
 
     elif curv_var == 'slope':
 
-        Pmax_norm = Pmax2_norm
-        Pmin_norm = Pmin2_norm
+        Pmax, Pmin = surfature(X, Y, slope)
 
+    # normalize the curvatures between 0 and 1
+    Pmax_norm = (Pmax - np.nanmin(Pmax)) / \
+        (np.nanmax(Pmax) - np.nanmin(Pmax))
+    Pmin_norm = - (Pmin - np.nanmin(Pmin)) / \
+        (np.nanmax(Pmin) - np.nanmin(Pmin))
+
+    # normalize the elevation between 0 and 1
     h_norm = (h - np.nanmin(h)) / (np.nanmax(h) - np.nanmin(h))
 
+    # normalize the slope between 0 and 1
     slope_norm = -(slope - np.nanmin(slope)) / \
         (np.nanmax(slope) - np.nanmin(slope))
 
@@ -1275,35 +1309,19 @@ if __name__ == '__main__':
             'max.curvature',
             'slope'))
 
-    norm_image = detect_ridges(
-        X,
-        Y,
-        slope,
-        h,
-        curv_var,
-        curvature_variable,
-        sigma=10.0,
-    )
+    norm_image = detect_ridges(X, Y, slope, h, curv_var, curvature_variable)
 
     det_var_plot_check = st.sidebar.checkbox('Detection variable Plot')
 
-    a_opacity = st.sidebar.slider("Detection variable opacity", 0, 100,
-                                  50)
+    a_opacity = st.sidebar.slider("Detection variable opacity", 0, 100, 50)
     a_alpha = a_opacity / 100.0
 
     save_top_var_check = st.sidebar.button('NetCDF for top save')
 
     if save_top_var_check:
 
-        save_netcdf(ascii_file,
-                    X,
-                    Y,
-                    slope,
-                    h_DEM,
-                    h,
-                    curv_var,
-                    curvature_variable,
-                    sigma=1.0)
+        save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var,
+                    curvature_variable)
 
     if det_var_plot_check:
 
@@ -1431,8 +1449,7 @@ if __name__ == '__main__':
         skeleton_vector, closed = raster_to_vector(X, Y, skeleton)
 
         skeleton_ellipse_check = st.sidebar.checkbox('Skeleton ellipse')
-        
-        
+
         skeleton_vector_check = st.sidebar.checkbox('Skeleton vector')
         skeleton_level = st.sidebar.slider("Skeleton vector simplify level", 0,
                                            20, 5)
@@ -1445,44 +1462,48 @@ if __name__ == '__main__':
 
         skeleton_ellipse_check = False
         skeleton_vector_check = False
+        synth_ellipse_check = False
 
     if skeleton_ellipse_check:
-    
+
         x, y = skeleton_vector.coords.xy
-    
+
         # Fit the contour with an ellipse
-        cx, cy, a, b, angle = fitEllipse(x - X[0, 0],
-                                         y - Y[0, 0], 2)
-                                                     
+        cx, cy, a, b, angle = fitEllipse(x - X[0, 0], y - Y[0, 0], 2)
+
         # Append the ellipse center coordinates to the lists
         # cx_ellipse.append(float(cx.real))
         # cy_ellipse.append(float(cy.real))
 
-        # Create an ellipse object from the fitting parameters 
-        ell = Ellipse((cx.real, cy.real), a.real * 2., b.real * 2.,
-                      angle.real)
-                                  
+        # Create an ellipse object from the fitting parameters
+        ell = Ellipse((cx.real, cy.real), a.real * 2., b.real * 2., angle.real)
+
         # Get the coordinates of a set of ellipse points
         ell_coord = ell.get_verts()
-        x_ellipse = ell_coord[:,0] + X[0, 0]
-        y_ellipse = ell_coord[:,1] + Y[0, 0]
-                    
+        x_ellipse = ell_coord[:, 0] + X[0, 0]
+        y_ellipse = ell_coord[:, 1] + Y[0, 0]
+
         # Plot the points in the absolute coordinate system
-        ax.plot(x_ellipse,y_ellipse, 'k-')
-                         
+        ax.plot(x_ellipse, y_ellipse, 'k-')
+
         # Plot the center of the ellipse in the absolute coordinate system
         ax.plot(cx.real + X[0, 0], cy.real + Y[0, 0], 'kx')
+
+    else:
+
+        synth_ellipse_check = False
 
     if skeleton_vector_check:
 
         # we compute a vector representation of the skeleton
         # skeleton_vector is a polyline defined by points
 
-        
-        
-        skeleton_vector, closed = improve_vector(skeleton_vector,closed,skeleton_level,skeleton_smoothing_level)
+        skeleton_vector, closed = improve_vector(skeleton_vector, closed,
+                                                 skeleton_level,
+                                                 skeleton_smoothing_level,
+                                                 skeleton_range)
 
-        print('Skeleton vector',skeleton_vector.geom_type)
+        print('Skeleton vector', skeleton_vector.geom_type)
         print('Closed', closed)
         ax.plot(*skeleton_vector.xy, 'g')
 
@@ -1577,7 +1598,7 @@ if __name__ == '__main__':
 
         # compute buffer area (points within a fixed distance from medial axis)
         path = offset_path(skeleton_vector, buffer_distance, False)
-        
+
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
         # find points within path
@@ -1800,13 +1821,14 @@ if __name__ == '__main__':
         slope_check = st.sidebar.checkbox('Slope analysis')
         slope_smooth_level = st.sidebar.slider("Slope smoothing level", 0, 20,
                                                5)
-        slope_fit_check = st.sidebar.checkbox('Slope fitting')
 
     else:
 
         slope_check = False
 
     if slope_check:
+
+        slope_fit_check = st.sidebar.checkbox('Slope fitting')
 
         # aspect from topography
         h_x_filtered = filters.gaussian(h_x, slope_smooth_level)
@@ -1903,12 +1925,12 @@ if __name__ == '__main__':
 
         synth_check = st.sidebar.checkbox('Synthetic cone')
         if skeleton_ellipse_check:
-        
-            synth_ellipse_check = st.sidebar.checkbox('Elliptic synthetic cone top')
+
+            synth_ellipse_check = st.sidebar.checkbox(
+                'Elliptic synthetic cone top')
 
         top_linear_check = st.sidebar.checkbox('Linear fit of cone top')
-        
-            
+
         synth_opacity = st.sidebar.slider("Synthetic cone opacity", 0, 100, 50)
         synth_alpha = synth_opacity / 100.0
 
@@ -1923,8 +1945,6 @@ if __name__ == '__main__':
         synth_check = False
 
     if synth_check:
-    
-        
 
         if top_linear_check:
 
@@ -1934,18 +1954,15 @@ if __name__ == '__main__':
 
             h_top = h
 
-
-
-        # compute small buffer area (points within distance 1.0 from top)        
+        # compute small buffer area (points within distance 1.0 from top)
         if synth_ellipse_check:
-        
+
             coords = np.array([[x, y] for x, y in zip(x_ellipse, y_ellipse)])
             path = offset_path(LinearRing(coords), 1.0, False)
 
         else:
-            
+
             path = offset_path(skeleton_vector, 1.0, False)
-        
 
         pixel_coordinates = np.c_[X.ravel(), Y.ravel()]
 
