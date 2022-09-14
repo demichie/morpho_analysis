@@ -256,6 +256,11 @@ def monoExp(x, m, t, b):
 
     return y
 
+def GammaFit(x,m,a,b):
+
+    from scipy.special import gamma
+
+    y = m * b**a / gamma(a) * x**(a-1) * np.exp(-b*x)
 
 @st.cache
 def surfature(X, Y, Z):
@@ -467,6 +472,9 @@ def offset_path(skeleton_vector, offset, plot_flag):
     print('offset_l', offset_l)
     print('offset_r', offset_r)
 
+    # we do not want the offset to be a MultiLineString
+    # but a LineString and, if both the offsetes (left
+    # and right) are LineString, we take the longer one
     if offset_l.geom_type == 'MultiLineString':
 
         offset = offset_r
@@ -489,22 +497,32 @@ def offset_path(skeleton_vector, offset, plot_flag):
     print('offset', offset.geom_type)
     print(offset)
 
+    # when building the full offset path (including skeleton
+    # and offset) we need to have their coordinates sorted
+    # in the right order. This is done by checking the 
+    # distances from the extreme points of skeleton and
+    # offset
     xs, ys = skeleton_vector.coords.xy
 
+    # first point of skeleton
     xA0 = xs[0]
     yA0 = ys[0]
 
+    # last point of skeleton
     xA1 = xs[-1]
     yA1 = ys[-1]
 
     xo, yo = offset.coords.xy
 
+    # first point of offset
     xB0 = xo[0]
     yB0 = yo[0]
 
+    # last point of offset
     xB1 = xo[-1]
     yB1 = yo[-1]
 
+    # distances between couple of points 
     dist_00 = np.sqrt((xA0 - xB0)**2 + (yA0 - yB0)**2)
     dist_01 = np.sqrt((xA0 - xB1)**2 + (yA0 - yB1)**2)
     dist_10 = np.sqrt((xA1 - xB0)**2 + (yA1 - yB0)**2)
@@ -518,13 +536,19 @@ def offset_path(skeleton_vector, offset, plot_flag):
     if plot_flag:
         ax.plot(*offset.xy)
 
+    # if the skeleton is closed we close also the offset
     if skeleton_vector.geom_type == 'LinearRing':
 
         xo.append(xo[0])
         yo.append(yo[0])
 
+    # create the polygon between skeleton and offset
     p = Polygon([(x, y) for x, y in zip(xs + xo, ys + yo)])
 
+    # convert to matplotlib path
+    # in this way we can use the matplotlib
+    # functions to check if the grid points
+    # are inside the path
     x, y = p.exterior.coords.xy
     xy_poly = [(x, y) for x, y in zip(x, y)]
     path = Path(xy_poly)
@@ -744,8 +768,7 @@ def file_selector(folder_path='.', ext='asc'):
 
 
 @st.cache
-def save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var,
-                curvature_variable):
+def save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var):
 
     Pmax1, Pmin1 = surfature(X, Y, h)
 
@@ -1320,8 +1343,7 @@ if __name__ == '__main__':
 
     if save_top_var_check:
 
-        save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var,
-                    curvature_variable)
+        save_netcdf(ascii_file, X, Y, slope, h_DEM, h, curv_var)
 
     if det_var_plot_check:
 
@@ -1522,8 +1544,7 @@ if __name__ == '__main__':
         st.sidebar.markdown("""---""")
 
         flank_check = st.sidebar.checkbox('Flank')
-        flank_var = 'Slow'
-
+        
         correction_factor = st.sidebar.slider("Scalar dot", 0.00, 1.00, 0.50)
 
         flank_opacity = st.sidebar.slider("Flank opacity", 0, 100, 50)
@@ -1549,32 +1570,9 @@ if __name__ == '__main__':
 
         scal_dot, grad_h_mag = compute_scal_dot(h_smooth, skeleton)
 
-        if flank_var == 'Normal':
+        img = find_slow(binary, h_smooth, scal_dot, correction_factor)
 
-            # rescale the number from [-1;1] to [0;1]
-            scal_dot = 0.5 * (1.0 + scal_dot)
-
-        elif flank_var == 'Corrected':
-
-            # rescale the number from [-1;1] to [0;1]
-            scal_dot = 0.5 * (1.0 + scal_dot)
-
-            # compute the slope in degrees from smoothed gradient
-            slope = np.arctan(grad_h_mag) * 180.0 / np.pi
-
-            # set min slope to 0 and max to 33 degrees
-            slope = (np.maximum(0.0, np.minimum(slope, 33.0))) / 33.0
-
-            # define a variable accounting for both the scalar dot
-            # and the slope
-            exponent = correction_factor
-            scal_dot = scal_dot**(1.0 - exponent) * slope**exponent
-
-        elif flank_var == 'Slow':
-
-            img = find_slow(binary, h_smooth, scal_dot, correction_factor)
-
-            scal_dot = img * scal_dot
+        scal_dot = img * scal_dot
 
         if flank_alpha > 0.0:
 
@@ -1909,8 +1907,20 @@ if __name__ == '__main__':
 
             p0 = (33, 0.01, 0.0)  # start with values near those we expect
             params, cv = scipy.optimize.curve_fit(monoExp, dist_half[1:],
-                                                  slp_mean[1:], p0)
+                                                  slp_mean[1:], p0,
+                                                  bounds=(0, [40., 1., 5.0]))
+
+            # p0 = (33, 2.0, 0.5)  # start with values near those we expect
+            # params, cv = scipy.optimize.curve_fit(GammaFit, dist_half[1:],
+            #                                       slp_mean[1:], p0)
+                                                                                                   
             m_fit, t_fit, b_fit = params
+
+            st.sidebar.write('Slope fit parameters:')
+            st.sidebar.write('m = ',m_fit)
+            st.sidebar.write('t = ',t_fit)
+            st.sidebar.write('b = ',b_fit)
+
 
             ax_slope2.plot(dist_half,
                            monoExp(dist_half, m_fit, t_fit, b_fit),
