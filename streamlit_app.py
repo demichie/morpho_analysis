@@ -1479,7 +1479,9 @@ if __name__ == '__main__':
             "Skeleton vector smoothing level", 0, 20, 0)
         skeleton_range = st.sidebar.slider('Skeleton range of values', 0, 100,
                                            (0, 100))
-
+        skeleton_vector_opacity = st.sidebar.slider("Skeleton vector opacity", 0, 100, 100)
+        skeleton_vector_alpha = skeleton_vector_opacity / 100.0
+        
     else:
 
         skeleton_ellipse_check = False
@@ -1527,7 +1529,7 @@ if __name__ == '__main__':
 
         print('Skeleton vector', skeleton_vector.geom_type)
         print('Closed', closed)
-        ax.plot(*skeleton_vector.xy, 'g')
+        ax.plot(*skeleton_vector.xy, 'g',alpha=skeleton_vector_alpha)
 
         if closed:
             # compute buffer area (points within a fixed distance from medial axis)
